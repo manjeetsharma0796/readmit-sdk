@@ -73,7 +73,7 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 ## Tasks (priority order)
 
 ### S01 · Continuous integration
-- status: doing
+- status: done
 - owner: manjeet (Claude Code)
 - started: 2026-11-07 04:59 IST
 - priority: P0
@@ -84,7 +84,7 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
   - On push and on PR: Node 24, `npm ci`, `npm run typecheck`, `npm test`, `npm run build`.
   - Add a second job, `live`, that runs `npm run test:live` only on `workflow_dispatch`. It depends on the public devnet, which can be down or reset, so it must not block merges.
 - done when: a PR shows the green check; a deliberately broken assertion turns it red.
-- log:
+- log: `.github/workflows/ci.yml` runs on push to main and on PRs: Node 24, `npm ci`, typecheck, `npm test`, build. The `live` job runs `npm run test:live` only on workflow_dispatch, so it never blocks merges. First run 42312296810 on 3157b17: test=success, live=skipped. Red path checked locally in a clean clone: a real failing `assert.equal(1, 2)` makes `node test/check.ts` exit 1 with an AssertionError, which fails the job. `npm ci` from the committed lockfile works.
 
 ### S02 · Publish to npm
 - status: todo

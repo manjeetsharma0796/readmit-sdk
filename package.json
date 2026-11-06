@@ -26,6 +26,10 @@
     "./recipes/erc20Paymaster": {
       "types": "./dist/recipes/erc20Paymaster.d.ts",
       "default": "./dist/recipes/erc20Paymaster.js"
+    },
+    "./ethers": {
+      "types": "./dist/src/ethers.d.ts",
+      "default": "./dist/src/ethers.js"
     }
   },
   "files": [
@@ -45,14 +49,21 @@
     "@forshtat/hegota-support": "0.0.1"
   },
   "peerDependencies": {
-    "viem": "^2.30.0"
+    "viem": "^2.30.0",
+    "ethers": "^6.0.0"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
+    "ethers": "6.16.0",
     "typescript": "~7.0.2",
     "viem": "2.57.0"
   },
   "engines": {
     "node": ">=23.6"
+  },
+  "peerDependenciesMeta": {
+    "ethers": {
+      "optional": true
+    }
   }
 }

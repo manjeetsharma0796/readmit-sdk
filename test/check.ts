@@ -4,6 +4,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPublicClient, http, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { ethersSigner, ethersTransport } from '../src/ethers.ts'
 import { erc20Paymaster, transferData } from '../recipes/erc20Paymaster.ts'
 import {
   ALT_MEMPOOL_DEVNET, DryRunFailed, RpcError, SCOPE, TxNotIncluded, WaitTimeout, applyPatch, createReadmit, decodeDraft, diagnose, frameActions,
@@ -36,6 +38,8 @@ assert.equal(await signDraft(draft, privateKeyToAccount(key), 1337), byKey, 'vie
 const custom = await signDraft(draft, { signHash: async (h) => (h === signingHash(draft, 1337) ? '0xabcdef' : '0x00') }, 1337)
 assert.match(custom, /abcdef/, 'custom signHash signer gets the signing hash and its bytes are used as is'); ok()
 assert.notEqual(await signDraft(draft, key, 1), byKey, 'chain id is part of what is signed'); ok()
+assert.equal(await signDraft(draft, ethersSigner(new Wallet(key)), 1337), byKey, 'ethers Wallet signer'); ok()
+assert.equal(await signDraft(draft, ethersSigner(new Wallet(key).signingKey), 1337), byKey, 'ethers SigningKey signer'); ok()
 const back = decodeDraft(byKey)
 assert.deepEqual([back.sender.toLowerCase(), back.nonce, back.frames.length], [me.toLowerCase(), 7n, 4]); ok()
 assert.match(rawTxHash(byKey), /^0x[0-9a-f]{64}$/); ok()
@@ -156,4 +160,6 @@ if (process.argv.includes('--live')) {
   console.log('live dry run (wrong key, expected to fail):', run.ok, '|', run.diagnosis.findings[0].title, '|', run.simulation.canonicalMempoolViolation)
   const viemClient = createPublicClient({ transport: http(ALT_MEMPOOL_DEVNET.ethrex) }).extend(frameActions({ miner: ALT_MEMPOOL_DEVNET.miner, gateway: ALT_MEMPOOL_DEVNET.gateway, chainId: 1337 }))
   console.log('live viem extend:', (await viemClient.explainFrameTransaction(gold)).chain.headline)
+  const viaEthers = createReadmit({ ...ALT_MEMPOOL_DEVNET, ethrex: ethersTransport(new JsonRpcProvider(ALT_MEMPOOL_DEVNET.ethrex as string, 1337, { staticNetwork: true })) })
+  console.log('live ethers transport:', (await viaEthers.explain(gold)).chain.headline)
 }

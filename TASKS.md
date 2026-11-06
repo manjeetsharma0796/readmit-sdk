@@ -215,7 +215,7 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 - log:
 
 ### S09 · ethers v6 adapter
-- status: doing
+- status: done
 - owner: manjeet (Claude Code)
 - started: 2026-11-07 04:59 IST
 - priority: P2
@@ -228,7 +228,7 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
     - a signer `{ signHash: async (h) => packed(wallet.signingKey.sign(h)) }`, where packed is `yParity || r || s`, 65 bytes, the same layout `signDraft` produces.
   - Test it against the golden hash.
 - done when: an ethers-built signer reproduces the golden hash in `test/check.ts`.
-- log:
+- log: `src/ethers.ts` exports `ethersTransport(provider)` and `ethersSigner(wallet | signingKey)`, exposed as `@readmit/sdk/ethers`. Structural types only: the built `dist/src/ethers.js` never imports ethers, which is an optional peer (`^6`; dev pin 6.16.0). I skipped `fromEthers`: `createReadmit({ ethrex: ethersTransport(p) })` is the same one line. `test/check.ts` signs the golden draft with `new Wallet(key)` and with its `SigningKey`, and both reproduce GOLDEN (23 offline cases OK). `--live` explains the golden tx through a `JsonRpcProvider` transport: Executed. README has a quick-start section and a warning about `signMessage`.
 
 ### S10 · Pluggable paymaster interface, plus a second recipe
 - status: todo

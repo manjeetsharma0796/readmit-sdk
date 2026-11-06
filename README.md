@@ -73,6 +73,21 @@ await client.explainFrameTransaction(hash)
 await client.sendFrameDraft(draft, account) // the account can be a viem LocalAccount
 ```
 
+**4. On ethers v6?** `ethers` is an optional peer; install it yourself.
+
+```ts
+import { JsonRpcProvider, Wallet } from 'ethers'
+import { createReadmit, ALT_MEMPOOL_DEVNET } from '@readmit/sdk'
+import { ethersTransport, ethersSigner } from '@readmit/sdk/ethers'
+
+const provider = new JsonRpcProvider(ALT_MEMPOOL_DEVNET.ethrex, 1337, { staticNetwork: true })
+const readmit = createReadmit({ ...ALT_MEMPOOL_DEVNET, ethrex: ethersTransport(provider) })
+
+await readmit.sendDraft(draft, ethersSigner(new Wallet(process.env.KEY!)))
+```
+
+`ethersSigner` signs the raw signing hash with the wallet's `SigningKey`. Do not use `wallet.signMessage`: it adds the EIP-191 prefix, and the default VERIFY code then rejects the signature.
+
 ## What it does
 
 | | Feature | API |
@@ -149,12 +164,12 @@ npm run test:live # plus read-only calls to the public devnet; never sends
 - **Devnet software.** EIP-8141 isn't on mainnet until Hegotá. The diagnosis knows *this* sidecar's rule names and message formats, and other ERC-8421 implementations may word them differently.
 - **Partial spec check.** The ERC-8421 verdict covers the validation budget and validation reverts only.
 - **`replay` window.** ethrex keeps state for about 128 blocks (~13 minutes on the devnet).
-- **Not on npm yet, and no ethers adapter** ([S02](TASKS.md#s02--publish-to-npm), [S09](TASKS.md#s09--ethers-v6-adapter)). ethers users can pass a transport function and a `{ signHash }` signer.
+- **Not on npm yet** ([S02](TASKS.md#s02--publish-to-npm)). Install from GitHub for now.
 - **The diagnosis engine is shared.** `src/diagnose.ts` is synced from the Readmit app. Fix bugs in both places until the app depends on this package.
 
 ## Contributing
 
-Open work, with enough context to pick any item up, is in **[TASKS.md](TASKS.md)**: CI, npm publish, moving the app onto this package, stable finding codes, gas estimation, keyed nonces, multi-signature / P256, deploy and post-op frames, an ethers adapter, a pluggable paymaster interface, the full ERC-8421 rule set, and more.
+Open work, with enough context to pick any item up, is in **[TASKS.md](TASKS.md)**: CI, npm publish, moving the app onto this package, stable finding codes, gas estimation, keyed nonces, multi-signature / P256, deploy and post-op frames, a pluggable paymaster interface, the full ERC-8421 rule set, and more.
 
 ```bash
 git clone https://github.com/manjeetsharma0796/readmit-sdk && cd readmit-sdk
@@ -172,6 +187,7 @@ npm run typecheck && npm test
 | `src/diagnose.ts` | The diagnosis engine (pure, no network) |
 | `src/monitor.ts` | Stages and rejection stats |
 | `src/viem.ts` | `frameActions` for `client.extend` |
+| `src/ethers.ts` | `ethersTransport` and `ethersSigner` (ethers v6, optional peer) |
 | `src/errors.ts`, `src/selectors.ts` | Typed errors; 4-byte lookup |
 | `recipes/erc20Paymaster.ts` | Gas paid in an ERC-20 through a `quote()` paymaster |
 

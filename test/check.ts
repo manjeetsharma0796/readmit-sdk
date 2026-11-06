@@ -2,13 +2,13 @@
 // Run: npm test   (or: node test/check.ts --live)
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { createPublicClient, http, type Hex } from 'viem'
+import { createPublicClient, encodeErrorResult, http, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { JsonRpcProvider, Wallet } from 'ethers'
 import { ethersSigner, ethersTransport } from '../src/ethers.ts'
 import { erc20Paymaster, transferData } from '../recipes/erc20Paymaster.ts'
 import {
-  ALT_MEMPOOL_DEVNET, DryRunFailed, RpcError, SCOPE, TxNotIncluded, WaitTimeout, applyPatch, createReadmit, decodeDraft, diagnose, frameActions,
+  ALT_MEMPOOL_DEVNET, DryRunFailed, FINDING_CODES, diagnoseDraft, RpcError, SCOPE, TxNotIncluded, WaitTimeout, applyPatch, createReadmit, decodeDraft, diagnose, frameActions,
   rawTxHash, rejectionStats, senderFrame, signDraft, signingHash, txStage, verifyFrame, type Draft,
 } from '../src/index.ts'
 
@@ -62,6 +62,60 @@ const rows = [
 ]
 assert.deepEqual(rejectionStats(rows), { total: 3, rejected: 2, senders: 1, spanMs: 60_000, topRules: [['simulation', 2], ['OP-011', 1]] }); ok()
 
+// 3b. Stable finding codes: every code in FINDING_CODES is produced by a real fixture or a sidecar/simulator message
+//     in the exact wording the regexes in diagnose.ts read. Callers branch on `code`, never on `title`.
+{
+  const seen = new Set<string>()
+  const codes = (findings: { code: string }[]) => { findings.forEach((f) => seen.add(f.code)); return findings.map((f) => f.code) }
+  const paid = load('paid-in-tusd')
+  const frames = paid.tx.admission.frames
+  const errData = (msg: string) => encodeErrorResult({ abi: [{ type: 'error', name: 'Error', inputs: [{ type: 'string', name: 'm' }] }], errorName: 'Error', args: [msg] })
+  // Fixtures recorded on the devnet.
+  assert.deepEqual(codes(diagnose(paid.tx, paid.receipt).findings), ['NOTHING_TO_FIX']); ok()
+  assert.equal(codes(diagnose(load('bad-signature').tx, null).findings)[0], 'BAD_SIGNATURE'); ok()
+  const oog = load('reverted-out-of-gas')
+  assert.deepEqual(codes(diagnose(oog.tx, oog.receipt).findings).slice(0, 2), ['FRAME_OUT_OF_GAS', 'PAYER_CHARGED_ON_FAILURE']); ok()
+  // Admission reports: one failed check each.
+  const rejected = (detail: string) => diagnose({ ...paid.tx, entry: null, admission: { ...paid.tx.admission, outcome: 'rejected', checks: [{ rule: 'simulation', verdict: 'fail', frameIndex: 1, detail }] } }, null).findings[0]
+  const admission: [string, string][] = [
+    ['prefix gas budget exceeded: 120000 > 100000 (MAX_VERIFY_GAS)', 'VALIDATION_GAS_OVER_CAP'],
+    ['gas sum 90000 + signature-verification cost 20000 = 110000 exceeds MAX_VERIFY_GAS 100000', 'VALIDATION_GAS_OVER_CAP'],
+    ['state gas sum 5000 exceeds MAX_VERIFY_STATE_GAS 0', 'VALIDATION_STATE_GAS_OVER_CAP'],
+    [`the payer ${me} has 1 wei, the transaction's maximum cost is 2 wei`, 'PAYER_CANNOT_COVER'],
+    ['validation frame 0: ran out of gas', 'VALIDATION_OUT_OF_GAS'],
+    ['validation frame 0: reverted', 'VALIDATION_REVERTED'],
+    [`validation frame 1: reverted with data ${errData('underpaid')}`, 'PAYMASTER_UNDERPAID'],
+    [`validation frame 1: reverted with data ${errData('sender lacks TOKEN')}`, 'PAYMASTER_SENDER_LACKS_TOKEN'],
+    [`validation frame 1: reverted with data ${errData('not to paymaster')}`, 'PAYMASTER_FEE_FRAME_INVALID'],
+    [`unstaked paymaster accessed ${A.token} slot 0x01`, 'UNSTAKED_STORAGE_READ'],
+    ['paymaster uses banned opcode: TIMESTAMP', 'BANNED_OPCODE'],
+    ['Nonce mismatch: expected 3, got 2', 'NONCE_MISMATCH'],
+    ['replacement transaction cannot be replaced: fee too low', 'REPLACEMENT_FEE_TOO_LOW'],
+    ['already known', 'ALREADY_KNOWN'],
+    ['some rule this engine has never seen', 'UNKNOWN_RULE'],
+  ]
+  for (const [detail, code] of admission) { assert.equal(rejected(detail).code, code, detail); seen.add(code); ok() }
+  // Receipts: a skipped frame, and a VERIFY frame that declares more than the 100k cap but uses less.
+  const rcpt = (st: string[]) => ({ ...paid.receipt, frameReceipts: paid.receipt.frameReceipts.map((r: any, i: number) => ({ ...r, status: st[i] })) })
+  assert.ok(codes(diagnose(paid.tx, rcpt(['0x1', '0x1', '0x0', '0x2'])).findings).includes('FRAME_SKIPPED')); ok()
+  const big = frames.map((f: any, i: number) => (i === 1 ? { ...f, limits: { ...f.limits, execution: '0x30d40' } } : f))
+  assert.ok(codes(diagnose({ ...paid.tx, entry: null, admission: { ...paid.tx.admission, frames: big } }, paid.receipt).findings).includes('VALIDATION_GAS_OVERDECLARED')); ok()
+  // Dry runs.
+  const sim = (over: object): any => ({ canonicalMempoolValid: true, canonicalMempoolViolation: null, prefixShape: null, payer: null, maxCost: '0x1', gasUsed: null, frames: null, executionStatus: null, executionError: null, ...over })
+  const ran = (ok: boolean[]) => sim({ frames: ok.map((s) => ({ gasUsed: '0x100', succeeded: s })), executionStatus: ok.every(Boolean) ? 'success' : 'reverted' })
+  assert.deepEqual(codes(diagnoseDraft(frames, ran([true, true, true, true])).findings), ['READY']); ok()
+  assert.deepEqual(codes(diagnoseDraft(frames, ran([true, true, true, false])).findings), ['FRAME_REVERTED', 'PAYER_CHARGED_ON_FAILURE']); ok()
+  assert.equal(codes(diagnoseDraft(frames, sim({ haltReason: 'insufficient_funds', balance: '0x0' })).findings)[0], 'PAYER_CANNOT_COVER'); ok()
+  assert.equal(codes(diagnoseDraft(frames, sim({ failedFrameIndex: 0, revertData: '0x5cd5d233' })).findings)[0], 'BAD_SIGNATURE'); ok()
+  assert.equal(codes(diagnoseDraft(frames, sim({ failedFrameIndex: 1, revertData: errData('underpaid') })).findings)[0], 'PAYMASTER_UNDERPAID'); ok()
+  assert.equal(codes(diagnoseDraft(frames, sim({ failedFrameIndex: 0, revertData: '0x' })).findings)[0], 'VALIDATION_REVERTED'); ok()
+  // A VERIFY frame that reads a pool's storage (shared state) is fragile.
+  const pool = '0x4444444444444444444444444444444444444444'
+  const trace = [{ frameIndex: 1, root: { type: 'CALL', from: paid.tx.admission.sender, to: frames[1].target, calls: [{ type: 'STATICCALL', from: frames[1].target, to: pool, accessedSlots: { reads: { '0x0': ['0x1'] } } }] } }]
+  assert.ok(codes(diagnoseDraft(frames, ran([true, true, true, true]), { sender: paid.tx.admission.sender, trace }).findings).includes('SHARED_STATE_READ')); ok()
+  assert.deepEqual(FINDING_CODES.filter((c) => !seen.has(c)), [], 'every code is produced by some case'); ok()
+}
+
 // 4. Client against a scripted fake node: explain, waitForInclusion, sendDraft's fix loop, typed errors.
 const oog = load('reverted-out-of-gas')
 function fake(script: Record<string, (params: any[]) => any>) {
@@ -74,7 +128,7 @@ function fake(script: Record<string, (params: any[]) => any>) {
   const eth = fake({ eth_getTransactionReceipt: () => oog.receipt })
   const r = createReadmit({ ethrex: eth.t, miner: node.t, chainId: 1337 })
   const dx = await r.explain(oog.hash)
-  assert.equal(dx.findings[0].title, diagnose(oog.tx, oog.receipt).findings[0].title)
+  assert.equal(dx.findings[0].code, diagnose(oog.tx, oog.receipt).findings[0].code)
   assert.deepEqual(dx.findings[0].patch, { kind: 'gas', frame: 4, gas: 38_000 }); ok()
 }
 {

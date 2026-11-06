@@ -10,6 +10,6 @@ export { lookupSelectors } from './selectors.ts'
 export { frameActions } from './viem.ts'
 // The diagnosis engine is shared with the Readmit app (pure, no network).
 export {
-  diagnose, diagnoseDraft, sharedReads, errorString, role, isVerify,
-  type Diagnosis, type Finding, type Patch, type Verdict, type Tone, type Frame, type Simulation, type TxResult, type Receipt, type TraceFrame,
+  diagnose, diagnoseDraft, sharedReads, FINDING_CODES, errorString, role, isVerify,
+  type Diagnosis, type Finding, type FindingCode, type Patch, type Verdict, type Tone, type Frame, type Simulation, type TxResult, type Receipt, type TraceFrame,
 } from './diagnose.ts'

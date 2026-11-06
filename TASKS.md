@@ -133,7 +133,7 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 - log:
 
 ### S04 · Stable finding codes
-- status: doing
+- status: done
 - owner: manjeet (Claude Code)
 - started: 2026-11-07 05:12 IST
 - priority: P1
@@ -153,7 +153,7 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
   - Add a table to the README.
   - Tests should assert on codes, not titles.
 - done when: every finding the 21 cases produce has a code, and the README lists all codes.
-- log:
+- log: Every `Finding` now has a required `code`, typed as `FindingCode` and listed at runtime in `FINDING_CODES` (23 codes, exported from the package root). Beyond the ticket list: `FRAME_SKIPPED`, `VALIDATION_GAS_OVERDECLARED`, `VALIDATION_STATE_GAS_OVER_CAP`, `VALIDATION_REVERTED`, `ALREADY_KNOWN`, `UNKNOWN_RULE`, and the paymaster split into `PAYMASTER_UNDERPAID`, `PAYMASTER_SENDER_LACKS_TOKEN` and `PAYMASTER_FEE_FRAME_INVALID`. `BAD_SIGNATURE` is a `VALIDATION_REVERTED` whose revert data is `BadSignature()` (0x5cd5d233), the selector in the recorded bad-signature fixture. Titles and wording are unchanged. Section 3b of `test/check.ts` asserts a code for every case: the three devnet fixtures, 15 sidecar admission messages in the exact wording the regexes parse (not new devnet recordings), receipts, dry runs and a pool-read trace. It fails if any code is never produced. Now 51 offline cases. The README has a codes table. **The app's `src/diagnose.ts` does not have codes yet**: porting them is additive, a `code` on each push.
 
 ### S05 · Gas estimation for drafts
 - status: todo

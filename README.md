@@ -32,7 +32,7 @@ const dx = await r.explain('0x3fd93ca4a082d636d08fc27a8afd65b6449dda7aff6609736e
 
 dx.mempool.headline // "Admitted and included"
 dx.chain.headline   // "Executed"
-dx.findings[0]      // { tone, frame?, title, why, fix?, patch? }, worst first
+dx.findings[0]      // { code, tone, frame?, title, why, fix?, patch? }, worst first
 ```
 
 **2. Build, dry-run, fix and send your own.**
@@ -146,15 +146,46 @@ The deployed addresses on chain 1337 are in [`test/fixtures/devnet-1337.json`](t
 
 All of them extend `ReadmitError`.
 
+## Finding codes
+
+Branch on `finding.code`, never on `title`: titles are prose and may be reworded, codes are never renamed. New codes may be added, so keep a default branch. The full list is exported as `FINDING_CODES`.
+
+| `code` | Tone | Meaning |
+|---|---|---|
+| `FRAME_OUT_OF_GAS` | fail | A frame used ≥ 98% of its limit and failed. Has a gas `patch`. |
+| `FRAME_REVERTED` | fail | A frame failed well under its limit: a logic revert, raising gas won't help. |
+| `FRAME_SKIPPED` | warn | A frame never ran because another frame in its atomic batch failed. |
+| `VALIDATION_GAS_OVERDECLARED` | warn | A VERIFY frame declares more than the 100k cap but uses less. |
+| `VALIDATION_GAS_OVER_CAP` | fail | VERIFY frames together declare more than the sidecar's `MAX_VERIFY_GAS`. |
+| `VALIDATION_STATE_GAS_OVER_CAP` | fail | VERIFY frames together declare more than `MAX_VERIFY_STATE_GAS`. |
+| `VALIDATION_OUT_OF_GAS` | fail | A VERIFY frame ran out of gas before approving. |
+| `VALIDATION_REVERTED` | fail | A VERIFY frame reverted, so the account or paymaster refused to approve. |
+| `BAD_SIGNATURE` | fail | The default VERIFY code reverted with `BadSignature()`: wrong key or wrong hash signed. |
+| `UNSTAKED_STORAGE_READ` | fail | An unstaked entity read storage not tied to the sender during validation. |
+| `BANNED_OPCODE` | fail | Validation used an opcode the mempool bans (e.g. `TIMESTAMP`). |
+| `PAYER_CANNOT_COVER` | fail | The payer's ETH balance is below the maximum cost. |
+| `NONCE_MISMATCH` | fail | The nonce isn't the account's next one. |
+| `REPLACEMENT_FEE_TOO_LOW` | fail | Same nonce already pending, and this one doesn't pay enough more to replace it. |
+| `ALREADY_KNOWN` | info | This exact transaction was already submitted. |
+| `UNKNOWN_RULE` | fail | A sidecar rule the engine doesn't map yet; `why` carries the sidecar's own text. |
+| `PAYMASTER_UNDERPAID` | fail | The ERC-20 fee is below the paymaster's live quote. Has a `requote` patch. |
+| `PAYMASTER_SENDER_LACKS_TOKEN` | fail | The sender doesn't hold enough of the fee token. |
+| `PAYMASTER_FEE_FRAME_INVALID` | fail | The frame after the paymaster isn't `token.transfer(paymaster, fee)`. |
+| `SHARED_STATE_READ` | warn | A VERIFY frame reads storage others can change (e.g. a pool's price). |
+| `PAYER_CHARGED_ON_FAILURE` | warn | Execution fails (or failed) after validation passed, so the payer pays anyway. |
+| `READY` | pass | Dry run: nothing to fix. |
+| `NOTHING_TO_FIX` | pass | Explain: admitted and included, and every frame succeeded. |
+
 ## How we know it works
 
 ```bash
-npm test          # 21 offline cases, no network
+npm test          # 51 offline cases, no network
 npm run test:live # plus read-only calls to the public devnet; never sends
 ```
 
 - **Byte-identical to the app.** Signing a reference draft gives the same transaction hash as the Readmit app's engine, which produced every live proof transaction in the [Readmit README](https://github.com/manjeetsharma0796/readmit#proof-live-on-chain-1337).
 - **Real devnet data.** The diagnosis cases are recorded admission reports and receipts from chain 1337 (`test/fixtures/`).
+- **Every finding code is produced.** A test runs each code's input through the engine: a devnet fixture where we have one, otherwise the sidecar's or simulator's message in the exact wording `diagnose.ts` parses. It fails if any code in `FINDING_CODES` is never produced.
 - **The fix loop, end to end against a scripted node.** A dry run reports "frame 3 would run out of gas, 16,000 of 16,000". The SDK patches the limit to 20,000, the dry run passes, and the fixed bytes are sent.
 - **Errors.** Rejected → `TxNotIncluded` with its diagnosis; never final → `WaitTimeout`; unreachable node → `RpcError`.
 - **Live, read-only.** It explains the golden tx, reads rejection stats, builds a tUSD-paid transfer with a live quote, confirms the node refuses a wrong signature in the dry run, and checks the viem `extend` path.
@@ -169,7 +200,7 @@ npm run test:live # plus read-only calls to the public devnet; never sends
 
 ## Contributing
 
-Open work, with enough context to pick any item up, is in **[TASKS.md](TASKS.md)**: CI, npm publish, moving the app onto this package, stable finding codes, gas estimation, keyed nonces, multi-signature / P256, deploy and post-op frames, a pluggable paymaster interface, the full ERC-8421 rule set, and more.
+Open work, with enough context to pick any item up, is in **[TASKS.md](TASKS.md)**: CI, npm publish, moving the app onto this package, gas estimation, keyed nonces, multi-signature / P256, deploy and post-op frames, a pluggable paymaster interface, the full ERC-8421 rule set, and more.
 
 ```bash
 git clone https://github.com/manjeetsharma0796/readmit-sdk && cd readmit-sdk

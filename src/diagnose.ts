@@ -21,7 +21,16 @@ export type Receipt = { status: string; gasUsed: string; effectiveGasPrice: stri
 export type Tone = 'pass' | 'fail' | 'warn' | 'info'
 /** A fix the app can apply by itself (Fix & send): set one frame's gas limit, or re-quote the tUSD fee from the pool. */
 export type Patch = { kind: 'gas'; frame: number; gas: number } | { kind: 'requote' }
-export type Finding = { tone: Tone; frame?: number; title: string; why: string; fix?: string; selector?: string; patch?: Patch }
+/** Stable ids for findings. Titles are prose and may be reworded; codes are never renamed (new ones may be added). */
+export const FINDING_CODES = [
+  'FRAME_OUT_OF_GAS', 'FRAME_REVERTED', 'FRAME_SKIPPED', 'VALIDATION_GAS_OVERDECLARED',
+  'VALIDATION_GAS_OVER_CAP', 'VALIDATION_STATE_GAS_OVER_CAP', 'VALIDATION_OUT_OF_GAS', 'VALIDATION_REVERTED', 'BAD_SIGNATURE',
+  'UNSTAKED_STORAGE_READ', 'BANNED_OPCODE', 'PAYER_CANNOT_COVER', 'NONCE_MISMATCH', 'REPLACEMENT_FEE_TOO_LOW', 'ALREADY_KNOWN', 'UNKNOWN_RULE',
+  'PAYMASTER_UNDERPAID', 'PAYMASTER_SENDER_LACKS_TOKEN', 'PAYMASTER_FEE_FRAME_INVALID',
+  'SHARED_STATE_READ', 'PAYER_CHARGED_ON_FAILURE', 'READY', 'NOTHING_TO_FIX',
+] as const
+export type FindingCode = (typeof FINDING_CODES)[number]
+export type Finding = { code: FindingCode; tone: Tone; frame?: number; title: string; why: string; fix?: string; selector?: string; patch?: Patch }
 export type Verdict = { tone: Tone; headline: string; sub: string }
 export type Diagnosis = { frames: Frame[]; findings: Finding[]; mempool: Verdict; chain: Verdict; spec: Verdict }
 
@@ -30,6 +39,8 @@ const SIDECAR_VERIFY_CAP = 100_000
 const ERC8421_STAKED_CAP = 1_000_000
 // A failed frame that used at least this share of its limit is treated as out of gas; below it, a logic revert.
 const OOG_SHARE = 0.98
+// BadSignature(): the default ECDSA VERIFY code's revert when the signature doesn't recover to the sender.
+const BAD_SIGNATURE = '0x5cd5d233'
 
 export const n = (hex?: string | null) => (hex ? Number(BigInt(hex)) : 0)
 export const fmt = (x: number) => x.toLocaleString('en-US')
@@ -58,18 +69,19 @@ export function errorString(data?: string | null): string | null {
 }
 
 /** Our V4PricedPaymaster's require() messages, in plain words, with the fix the app can apply. */
-function paymasterReason(reason: string, i: number, w: boolean): Pick<Finding, 'title' | 'why' | 'fix' | 'patch'> | null {
+function paymasterReason(reason: string, i: number, w: boolean): Pick<Finding, 'code' | 'title' | 'why' | 'fix' | 'patch'> | null {
   if (reason === 'underpaid')
     return {
+      code: 'PAYMASTER_UNDERPAID',
       title: "The tUSD fee is below the paymaster's price",
       why: `The paymaster prices gas from the Uniswap v4 pool while it validates. The fee in frame ${i + 1} is lower than its quote right now, usually because the pool price moved after the transaction was signed.`,
       fix: 'Re-quote the fee from the pool and re-sign. Fix & send does this for you.',
       patch: { kind: 'requote' },
     }
   if (reason === 'sender lacks TOKEN')
-    return { title: "The sender doesn't hold enough tUSD for the fee", why: `The paymaster checks the sender's tUSD balance before it agrees to pay, and the fee is more than the sender ${w ? 'has' : 'had'}.`, fix: 'Top up the sender with tUSD, or send a smaller amount.' }
+    return { code: 'PAYMASTER_SENDER_LACKS_TOKEN', title: "The sender doesn't hold enough tUSD for the fee", why: `The paymaster checks the sender's tUSD balance before it agrees to pay, and the fee is more than the sender ${w ? 'has' : 'had'}.`, fix: 'Top up the sender with tUSD, or send a smaller amount.' }
   if (/^(next frame not SENDER|next frame not TOKEN|not transfer\(\)|not to paymaster)$/.test(reason))
-    return { title: "The paymaster's fee frame is missing or wrong", why: `The paymaster only pays if the frame right after it (frame ${i + 1}) is a SENDER frame calling tUSD.transfer(paymaster, fee). It said: "${reason}".`, fix: `Put tUSD.transfer(paymaster, fee) directly after frame ${i}.` }
+    return { code: 'PAYMASTER_FEE_FRAME_INVALID', title: "The paymaster's fee frame is missing or wrong", why: `The paymaster only pays if the frame right after it (frame ${i + 1}) is a SENDER frame calling tUSD.transfer(paymaster, fee). It said: "${reason}".`, fix: `Put tUSD.transfer(paymaster, fee) directly after frame ${i}.` }
   return null
 }
 
@@ -91,6 +103,7 @@ function execFindings(frames: Frame[], results: ExecResult[], tense: 'did' | 'wo
       const oog = limit > 0 && used / limit >= OOG_SHARE
       const newLimit = fmt(roundUp(used * 1.25))
       out.push({
+        code: oog ? 'FRAME_OUT_OF_GAS' : 'FRAME_REVERTED',
         tone: 'fail',
         frame: i,
         title: oog ? `Frame ${i} ${w ? 'would run' : 'ran'} out of gas` : `Frame ${i} ${w ? 'would revert' : 'reverted'} (not a gas problem)`,
@@ -105,6 +118,7 @@ function execFindings(frames: Frame[], results: ExecResult[], tense: 'did' | 'wo
       })
     } else if (fr.status === '0x2') {
       out.push({
+        code: 'FRAME_SKIPPED',
         tone: 'warn',
         frame: i,
         title: `Frame ${i} ${w ? 'would be' : 'was'} skipped`,
@@ -114,6 +128,7 @@ function execFindings(frames: Frame[], results: ExecResult[], tense: 'did' | 'wo
       })
     } else if (isVerify(f) && limit > SIDECAR_VERIFY_CAP && used < SIDECAR_VERIFY_CAP) {
       out.push({
+        code: 'VALIDATION_GAS_OVERDECLARED',
         tone: 'warn',
         frame: i,
         title: `Frame ${i} declares far more gas than it uses`,
@@ -205,6 +220,7 @@ export function diagnoseDraft(frames: Frame[], sim: Simulation, opts?: { sender:
   if (halted && (sim.haltReason === 'insufficient_funds' || /cannot cover/.test(sim.haltDetail ?? ''))) {
     const who = sim.account ?? sim.payer
     findings.push({
+      code: 'PAYER_CANNOT_COVER',
       tone: 'fail',
       title: "The payer can't cover the maximum cost",
       why: `The payer${who ? ` ${who.slice(0, 6)}…${who.slice(-4)}` : ''} has ${eth(sim.balance)} ETH, but the transaction could cost up to ${eth(sim.required ?? sim.maxCost)} ETH.`,
@@ -217,6 +233,7 @@ export function diagnoseDraft(frames: Frame[], sim: Simulation, opts?: { sender:
     const i = sim.failedFrameIndex
     const reason = errorString(sim.revertData)
     findings.push({
+      code: sim.revertData?.startsWith(BAD_SIGNATURE) ? 'BAD_SIGNATURE' : 'VALIDATION_REVERTED',
       tone: 'fail',
       frame: i,
       title: i != null ? `Frame ${i} would reject the transaction during validation` : 'The transaction would be rejected',
@@ -228,6 +245,7 @@ export function diagnoseDraft(frames: Frame[], sim: Simulation, opts?: { sender:
     findings.push(...execFindings(frames, sim.frames!.map((f) => ({ status: f.succeeded ? '0x1' : '0x0', gasUsed: f.gasUsed })), 'would'))
     if (sim.executionStatus === 'reverted') {
       findings.push({
+        code: 'PAYER_CHARGED_ON_FAILURE',
         tone: 'warn',
         title: 'If you send it now, the payer is still charged',
         why: `Validation passes, so the mempool would admit it, and the payer would pay for the failed execution, up to ${eth(sim.maxCost)} ETH.`,
@@ -236,13 +254,14 @@ export function diagnoseDraft(frames: Frame[], sim: Simulation, opts?: { sender:
     }
   }
   if (!findings.some((f) => f.tone === 'fail' || f.tone === 'warn')) {
-    findings.push({ tone: 'pass', title: 'Ready to send', why: 'The dry run passed: validation approves it and every frame succeeds.' })
+    findings.push({ code: 'READY', tone: 'pass', title: 'Ready to send', why: 'The dry run passed: validation approves it and every frame succeeds.' })
   }
   const trace = opts?.trace ?? sim.erc7562Trace
   if (opts?.sender && trace) {
     for (const r of sharedReads(frames, trace, opts.sender)) {
       const who = r.contracts.map((c) => `${c.slice(0, 6)}…${c.slice(-4)}`).join(', ')
       findings.push({
+        code: 'SHARED_STATE_READ',
         tone: 'warn',
         frame: r.frame,
         title: 'This tx depends on the pool price; a swap can invalidate it before inclusion',
@@ -296,6 +315,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
       const cap = Number(budgetOld ? budgetOld[4] : budgetNew![2])
       const parts = budgetOld ? `${fmt(Number(budgetOld[1]))} gas plus ${fmt(Number(budgetOld[2]))} for the signature, ` : ''
       findings.push({
+        code: 'VALIDATION_GAS_OVER_CAP',
         tone: 'fail',
         title: 'Validation gas is over the mempool cap',
         why: `The verification frames declare ${parts}${fmt(total)} in total. This sidecar caps validation at ${fmt(cap)} for every account, staked or not.${ruleNote}`,
@@ -307,6 +327,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
           : { tone: 'fail', headline: 'Also rejected', sub: `Over the ${fmt(ERC8421_STAKED_CAP)} staked budget` }
     } else if (stateCap) {
       findings.push({
+        code: 'VALIDATION_STATE_GAS_OVER_CAP',
         tone: 'fail',
         title: 'Validation state gas is over the mempool cap',
         why: `The verification frames declare ${fmt(Number(stateCap[1]))} state gas in total, over this sidecar's cap of ${fmt(Number(stateCap[2]))}.${ruleNote}`,
@@ -315,6 +336,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
     } else if (payer) {
       const cost = Number(payer[3]) / 1e18
       findings.push({
+        code: 'PAYER_CANNOT_COVER',
         tone: 'fail',
         title: "The payer can't cover the maximum cost",
         why: `The payer ${payer[1].slice(0, 6)}…${payer[1].slice(-4)} has ${(Number(payer[2]) / 1e18).toFixed(6)} ETH, but the transaction could cost up to ${cost.toFixed(6)} ETH (all gas limits × maxFeePerGas).${ruleNote}`,
@@ -324,6 +346,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
     } else if (vOog) {
       const i = Number(vOog[1])
       findings.push({
+        code: 'VALIDATION_OUT_OF_GAS',
         tone: 'fail',
         frame: i,
         title: `Frame ${i} ran out of gas during validation`,
@@ -340,6 +363,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
     } else if (vrev) {
       const i = Number(vrev[1])
       findings.push({
+        code: vrev[2]?.startsWith(BAD_SIGNATURE) ? 'BAD_SIGNATURE' : 'VALIDATION_REVERTED',
         tone: 'fail',
         frame: i,
         title: `Frame ${i} rejected the transaction during validation`,
@@ -353,6 +377,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
     } else if (storage) {
       const [, who, what, slot] = storage
       findings.push({
+        code: 'UNSTAKED_STORAGE_READ',
         tone: 'fail',
         frame: c.frameIndex,
         title: `The ${who} read storage it isn't allowed to read unstaked`,
@@ -363,6 +388,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
     } else if (opcode) {
       const [, who, op] = opcode
       findings.push({
+        code: 'BANNED_OPCODE',
         tone: 'fail',
         frame: c.frameIndex,
         title: `The ${who} uses ${op}, which validation can't use`,
@@ -372,6 +398,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
       spec = { tone: 'fail', headline: 'Also invalid', sub: 'The spec bans the same opcodes in validation' }
     } else if (nonce) {
       findings.push({
+        code: 'NONCE_MISMATCH',
         tone: 'fail',
         title: 'Wrong nonce',
         why: `The account's next nonce is ${nonce[1]}, but the transaction uses ${nonce[2]}.${ruleNote}`,
@@ -380,6 +407,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
       spec = { tone: 'info', headline: 'Not a spec conflict', sub: 'Nonces must be in order everywhere' }
     } else if (/cannot be replaced: fee too low/.test(d)) {
       findings.push({
+        code: 'REPLACEMENT_FEE_TOO_LOW',
         tone: 'fail',
         title: 'A transaction with this nonce is already pending',
         why: `The mempool already holds a transaction from this sender with the same nonce, and this one does not pay enough more to replace it.${ruleNote}`,
@@ -387,10 +415,10 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
       })
       spec = { tone: 'info', headline: 'Not a validity rule', sub: 'Replacement pricing is mempool policy, not part of the transaction rules' }
     } else if (/already known/.test(d)) {
-      findings.push({ tone: 'info', title: 'Already in the mempool', why: `This exact transaction was already submitted, so nothing new happened.${ruleNote}` })
+      findings.push({ code: 'ALREADY_KNOWN', tone: 'info', title: 'Already in the mempool', why: `This exact transaction was already submitted, so nothing new happened.${ruleNote}` })
     } else {
       // Unknown rule: show the sidecar's words as they are rather than guessing.
-      findings.push({ tone: 'fail', frame: c.frameIndex, title: `Rule "${c.rule}" failed`, why: d || 'The sidecar gave no detail for this rule.' })
+      findings.push({ code: 'UNKNOWN_RULE', tone: 'fail', frame: c.frameIndex, title: `Rule "${c.rule}" failed`, why: d || 'The sidecar gave no detail for this rule.' })
       spec = { tone: 'info', headline: 'Not checked', sub: `Readmit has no spec mapping for "${c.rule}" yet` }
     }
     // Several failed rules: keep the most severe spec verdict, not just the last one.
@@ -407,6 +435,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
       const payer = receipt.payer ?? tx.entry?.payer
       const passed = adm && adm.outcome !== 'rejected'
       findings.push({
+        code: 'PAYER_CHARGED_ON_FAILURE',
         tone: 'warn',
         title: passed ? 'Admitted, but it still failed, and the payer was charged' : 'It failed on chain, and the payer was still charged',
         why: `${passed ? 'Every admission rule passed, yet execution failed on chain. ' : ''}The payer${payer ? ` ${payer.slice(0, 6)}…${payer.slice(-4)}` : ''} paid ${paid.toFixed(6)} ETH for ${fmt(n(receipt.gasUsed))} gas.`,
@@ -416,7 +445,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
   }
 
   if (!findings.some((f) => f.tone === 'fail' || f.tone === 'warn')) {
-    findings.push({ tone: 'pass', title: 'Nothing to fix', why: receipt ? 'Admitted and included, and every frame succeeded.' : 'Every admission rule passed.' })
+    findings.push({ code: 'NOTHING_TO_FIX', tone: 'pass', title: 'Nothing to fix', why: receipt ? 'Admitted and included, and every frame succeeded.' : 'Every admission rule passed.' })
   }
 
   const outcome = adm?.outcome ?? tx.entry?.status ?? 'unknown'

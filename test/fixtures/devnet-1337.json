@@ -1,0 +1,13 @@
+{
+  "chainId": 1337,
+  "deployBlock": 5995,
+  "paymaster": "0xc9ca898B92fA53635959021239E190Cf22c1F1d9",
+  "paymasterStaked": true,
+  "poolId": "0x34922fed10996ce5dd957a27451ba63cc0cefb6e33f83cad6b9bf7aa176e4975",
+  "swapper": "0x4EE0cd5AcB8B0DbF00a537Edd765eb7Cb79fc0c9",
+  "tUSD": "0xFa85eaee2c9abF09Ec7c305692979C0Ab91D0024",
+  "tUSDDecimals": 6,
+  "stakeTx": "0x84c42869f245cb6c8c68bc568bca2908cf399c6eb9807dff4c68443ccc6a22a9",
+  "demoWallet": "0x1328e0a64F2fc445382e8FF59F4Ab727fBec5742",
+  "demoFundTx": "0xbee97973bedf7682dd555ab6364bfd254c2440c3349550546547e3f268c08458"
+}

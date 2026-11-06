@@ -1,0 +1,127 @@
+{
+ "name": "bad-signature",
+ "hash": "0xc962d3d0bc2b24dd440cd9391bd02c2723f3e405f63a860c5f04f9730247e645",
+ "node": "gateway",
+ "tx": {
+  "hash": "0xc962d3d0bc2b24dd440cd9391bd02c2723f3e405f63a860c5f04f9730247e645",
+  "entry": null,
+  "admission": {
+   "id": 623,
+   "txHash": "0xc962d3d0bc2b24dd440cd9391bd02c2723f3e405f63a860c5f04f9730247e645",
+   "sender": "0x71a13Fc282643a8317F88b1b193Dd2974e46756d",
+   "nonce": "0xa",
+   "nonceKeys": [
+    "0x0"
+   ],
+   "at": 1793911569523,
+   "source": "rpc",
+   "outcome": "rejected",
+   "errorCode": -32500,
+   "checks": [
+    {
+     "rule": "gas-limit",
+     "verdict": "pass"
+    },
+    {
+     "rule": "recent-root",
+     "verdict": "pass"
+    },
+    {
+     "rule": "prefix",
+     "verdict": "pass"
+    },
+    {
+     "rule": "structure",
+     "verdict": "pass"
+    },
+    {
+     "rule": "signature",
+     "verdict": "pass"
+    },
+    {
+     "rule": "simulation",
+     "verdict": "fail",
+     "detail": "validation frame 0: reverted with data 0x5cd5d233"
+    },
+    {
+     "rule": "trace-alignment",
+     "verdict": "skipped"
+    },
+    {
+     "rule": "OP-061",
+     "verdict": "skipped"
+    },
+    {
+     "rule": "execution",
+     "verdict": "skipped"
+    },
+    {
+     "rule": "mempool",
+     "verdict": "skipped"
+    },
+    {
+     "rule": "out-of-gas",
+     "verdict": "skipped"
+    },
+    {
+     "rule": "OP-011",
+     "verdict": "skipped"
+    },
+    {
+     "rule": "create",
+     "verdict": "skipped"
+    },
+    {
+     "rule": "storage",
+     "verdict": "skipped"
+    },
+    {
+     "rule": "COD-010",
+     "verdict": "skipped"
+    },
+    {
+     "rule": "entrypoint-access",
+     "verdict": "skipped"
+    }
+   ],
+   "frames": [
+    {
+     "mode": 1,
+     "flags": 3,
+     "target": null,
+     "limits": {
+      "execution": "0x182b8",
+      "state": "0x0"
+     },
+     "value": "0x0",
+     "data": "0xfc735e99"
+    },
+    {
+     "mode": 2,
+     "flags": 0,
+     "target": "0xd604AdCfe4e8D55E61199209302d6B1B18A32b4F",
+     "limits": {
+      "execution": "0xc350",
+      "state": "0x0"
+     },
+     "value": "0x1",
+     "data": "0x"
+    }
+   ],
+   "frameStatuses": [
+    "not-run",
+    "not-run"
+   ]
+  },
+  "events": [
+   {
+    "seq": 1096,
+    "txHash": "0xc962d3d0bc2b24dd440cd9391bd02c2723f3e405f63a860c5f04f9730247e645",
+    "at": 1793911569562,
+    "kind": "rejected",
+    "reason": "validation frame 0: reverted with data 0x5cd5d233"
+   }
+  ]
+ },
+ "receipt": null
+}

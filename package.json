@@ -1,0 +1,58 @@
+{
+  "name": "@readmit/sdk",
+  "version": "0.1.0",
+  "description": "Build, dry-run, diagnose, fix, send and watch EIP-8141 frame transactions on an ERC-8421 alternative mempool",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manjeetsharma0796/readmit-sdk.git"
+  },
+  "homepage": "https://github.com/manjeetsharma0796/readmit-sdk#readme",
+  "keywords": [
+    "eip-8141",
+    "erc-8421",
+    "frame-transactions",
+    "account-abstraction",
+    "mempool",
+    "viem",
+    "paymaster"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "default": "./dist/src/index.js"
+    },
+    "./recipes/erc20Paymaster": {
+      "types": "./dist/recipes/erc20Paymaster.d.ts",
+      "default": "./dist/recipes/erc20Paymaster.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node test/check.ts",
+    "test:live": "node test/check.ts --live",
+    "prepublishOnly": "npm run build && npm test",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "@forshtat/hegota-support": "0.0.1"
+  },
+  "peerDependencies": {
+    "viem": "^2.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "~7.0.2",
+    "viem": "2.57.0"
+  },
+  "engines": {
+    "node": ">=23.6"
+  }
+}

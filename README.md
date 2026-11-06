@@ -149,10 +149,12 @@ npm run test:live # plus read-only calls to the public devnet; never sends
 - **Devnet software.** EIP-8141 isn't on mainnet until Hegotá. The diagnosis knows *this* sidecar's rule names and message formats, and other ERC-8421 implementations may word them differently.
 - **Partial spec check.** The ERC-8421 verdict covers the validation budget and validation reverts only.
 - **`replay` window.** ethrex keeps state for about 128 blocks (~13 minutes on the devnet).
-- **Not on npm yet, and no ethers adapter.** ethers users can pass a transport function and a `{ signHash }` signer.
+- **Not on npm yet, and no ethers adapter** ([S02](TASKS.md#s02--publish-to-npm), [S09](TASKS.md#s09--ethers-v6-adapter)). ethers users can pass a transport function and a `{ signHash }` signer.
 - **The diagnosis engine is shared.** `src/diagnose.ts` is synced from the Readmit app. Fix bugs in both places until the app depends on this package.
 
 ## Contributing
+
+Open work, with enough context to pick any item up, is in **[TASKS.md](TASKS.md)**: CI, npm publish, moving the app onto this package, stable finding codes, gas estimation, keyed nonces, multi-signature / P256, deploy and post-op frames, an ethers adapter, a pluggable paymaster interface, the full ERC-8421 rule set, and more.
 
 ```bash
 git clone https://github.com/manjeetsharma0796/readmit-sdk && cd readmit-sdk

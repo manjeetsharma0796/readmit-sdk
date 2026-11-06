@@ -133,8 +133,9 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 - log:
 
 ### S04 · Stable finding codes
-- status: todo
-- owner:
+- status: doing
+- owner: manjeet (Claude Code)
+- started: 2026-11-07 05:12 IST
 - priority: P1
 - depends: none
 - touches: `src/diagnose.ts`, `src/errors.ts` (re-export the type), `test/check.ts`, `README.md`

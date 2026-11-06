@@ -73,8 +73,9 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 ## Tasks (priority order)
 
 ### S01 · Continuous integration
-- status: todo
-- owner:
+- status: doing
+- owner: manjeet (Claude Code)
+- started: 2026-11-07 04:59 IST
 - priority: P0
 - depends: none
 - touches: `.github/workflows/ci.yml` (new)
@@ -214,8 +215,9 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 - log:
 
 ### S09 · ethers v6 adapter
-- status: todo
-- owner:
+- status: doing
+- owner: manjeet (Claude Code)
+- started: 2026-11-07 04:59 IST
 - priority: P2
 - depends: none
 - touches: `src/ethers.ts` (new; `ethers` as an **optional** peer dependency), `package.json` exports `./ethers`, `README.md`

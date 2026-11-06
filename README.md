@@ -16,7 +16,7 @@ This SDK turns those into **which frame, why, and the number to change**. It als
 
 ## Quick start
 
-Requires **Node 23.6+**, which runs the TypeScript sources directly. It isn't on npm yet, so install it from GitHub:
+Requires **Node 23.6+**. It isn't on npm yet, so install it from GitHub; the install builds `dist/` for you:
 
 ```bash
 npm install github:manjeetsharma0796/readmit-sdk viem

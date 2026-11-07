@@ -379,3 +379,21 @@ npm run typecheck && npm test
 - [EIP-8141: Frame Transaction](https://eips.ethereum.org/EIPS/eip-8141) · [Alt mempool docs](https://docs.altmempool.wtf/) · [Devnet explorer](https://explorer.altmempool.wtf/) · [Workshop sidecar](https://github.com/forshtat/mempool-workshop-sidecar)
 
 Built at ETHGlobal Mumbai 2026 for the EF alt-mempool developer-tooling track. MIT licensed.
+
+## How we built it: history and AI use
+
+**History.**
+- This package was extracted on Sat 7 Nov from the engine of the [Readmit](https://github.com/manjeetsharma0796/readmit) app, built during the same hackathon. The first commit is `692224b` (04:47 IST).
+- `src/diagnose.ts` is a synced copy of the app's diagnosis engine.
+- Every change after that is a small commit tied to a ticket in [`TASKS.md`](TASKS.md).
+- All code commits are before the 09:00 IST deadline. This section was added afterwards; it changes no code.
+
+**AI use.**
+- We built this package the same way as the app: with AI coding agents, mainly Claude Code, working from tickets the team wrote. The agents wrote most of the code, tests and docs here.
+- Each ticket in `TASKS.md` names its owner. Tickets marked `manjeet (Claude Code)` (S01 CI, S04 finding codes, S09 ethers adapter) were done by Claude Code for that teammate.
+- The full record for the project, with ticket counts per agent, is in the app's README under ["How we built it: history, AI use and what we reused"](https://github.com/manjeetsharma0796/readmit#how-we-built-it-history-ai-use-and-what-we-reused).
+
+**What the team did.**
+- Chose what the SDK should do, wrote and prioritised the tickets, and reviewed every change.
+- Kept the rules that tests never send transactions and that new diagnosis cases come from real devnet data (`test/fixtures/`).
+- Checked results against live devnet transactions.

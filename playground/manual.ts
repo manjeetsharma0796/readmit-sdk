@@ -179,7 +179,7 @@ await check('Fixes are data (applyPatch: gas patch, requote patch)', async () =>
   const fixed = await applyPatch(tight, { kind: 'gas', frame: 3, gas: 20_000 })
   const re = await applyPatch(tight, { kind: 'requote' }, { requote: pm.requote })
   must(fixed.frames[3].gas === 20_000n, 'gas patch not applied')
-  return [`gas patch: frame 3 limit ${tight.frames[3].gas} → ${fixed.frames[3].gas}`, `requote patch: fee frame rewritten from the live price (${re.frames[2].data === tight.frames[2].data ? 'price unchanged' : 'price moved'})`]
+  return [`gas patch: frame 3 limit ${tight.frames[3].gas} → ${fixed.frames[3].gas}`, `requote patch: fee ${formatUnits(BigInt('0x' + tight.frames[2].data.slice(-64)), 6)} → ${formatUnits(BigInt('0x' + re.frames[2].data.slice(-64)), 6)} tUSD (re-priced live for the new, lower gas limits)`]
 })
 
 await check('Fix loop stops before broadcasting (sendDraft with a send-blocking node)', async () => {

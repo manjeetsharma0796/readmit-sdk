@@ -151,6 +151,26 @@ try {
 }
 ```
 
+**Set the gas limits from a simulation** instead of guessing: `estimate` simulates, sets each limit to used × 1.25 (rounded up to 1,000), keeps the VERIFY frames inside the sidecar's 100,000 budget, re-signs and confirms. Nothing is broadcast.
+
+```ts
+const { draft: sized, warnings, ok } = await r.estimate(draft, privateKey, { requote: pm.requote /* only for a paymaster */ })
+```
+
+**Keyed nonces (EIP-8250).** Pass `nonceKeys` for parallel transactions from one sender. The sequence is read from the NONCE_MANAGER storage slot (the contract has no getter); keys must be strictly increasing, at most 16, and at the same sequence. `recentRootReferences` are carried through build, sign and decode.
+
+```ts
+const draft = await r.buildFrameTx({ sender, frames, nonceKeys: [5n] })   // nonce = the sequence stored for key 5
+```
+
+**Cancel a wait** (for example when a component unmounts). Polling is every 2 s for the first 30 s, then backs off to 8 s.
+
+```ts
+const ac = new AbortController()
+r.waitForInclusion(hash, { signal: ac.signal }).catch((e) => e.name === 'AbortError' || console.error(e))
+ac.abort()
+```
+
 **On viem:** add frame-transaction actions to your client.
 
 ```ts
@@ -227,10 +247,10 @@ Send A needs a little devnet ETH on the key: use the faucet on the [explorer](ht
 | 🧪 | **Admission simulator.** Dry run on ethrex before anything is broadcast; "frame 3 would run out of gas" before anyone pays. | `r.dryRun(draft, signer)`, `r.simulate(raw)`, `diagnoseDraft(...)` |
 | 🔧 | **Machine-readable fixes.** Every finding that has a fix carries a `patch`, e.g. `{ kind: 'gas', frame: 3, gas: 20000 }` (used × 1.25, rounded up to 1,000). Apply it, re-sign, resend. | `applyPatch(draft, patch)`, `r.sendDraft(...)` |
 | ⚠️ | **Fragility check.** Warns when a VERIFY frame reads storage someone else can change, like a Uniswap pool's `slot0`, so a swap can invalidate your pending transaction. | `sharedReads(...)`, inside `diagnoseDraft` |
-| 🏗️ | **Generic builder.** Any frames, any sender, nonce and fees filled from the node. | `r.buildFrameTx(...)`, `verifyFrame`, `senderFrame`, `MODE`, `SCOPE` |
+| 🏗️ | **Generic builder.** Any frames, any sender, nonce and fees filled from the node. | `r.buildFrameTx(...)`, `r.estimate(...)`, `verifyFrame`, `senderFrame`, `MODE`, `SCOPE` |
 | ✍️ | **Pluggable signing.** A private key, a viem `LocalAccount`, or `{ signHash }` for any other scheme (post-quantum, multisig). The chain ID is a parameter. | `r.sign(...)`, `signDraft(...)`, `signingHash(...)` |
 | 📤 | **Send to the alt mempool** in the sidecar's wire format. | `r.send(raw, node?)` |
-| 📡 | **Tracking.** pending → admitted → included, or rejected / failed / **dropped** (admitted but never mined, which only happens on an alt mempool). | `r.watch(hash, cb)`, `r.waitForInclusion(hash)` |
+| 📡 | **Tracking.** pending → admitted → included, or rejected / failed / **dropped** (admitted but never mined, which only happens on an alt mempool). | `r.watch(hash, cb, { signal })`, `r.waitForInclusion(hash, { signal })` |
 | 📊 | **Mempool monitoring.** The node's latest admission decisions: how many were rejected, by how many senders, and the top rules. | `r.recent()`, `r.stats()`, `rejectionStats(rows)` |
 | 🧯 | **Revert reasons.** Replays a fresh on-chain failure on its parent block. | `r.replay(hash)` |
 | 🔤 | **Decoders.** `Error(string)` / `Panic` / custom-error selectors, frame roles, 4-byte names. | `errorString`, `role`, `lookupSelectors` |

@@ -156,7 +156,7 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 - log: Every `Finding` now has a required `code`, typed as `FindingCode` and listed at runtime in `FINDING_CODES` (23 codes, exported from the package root). Beyond the ticket list: `FRAME_SKIPPED`, `VALIDATION_GAS_OVERDECLARED`, `VALIDATION_STATE_GAS_OVER_CAP`, `VALIDATION_REVERTED`, `ALREADY_KNOWN`, `UNKNOWN_RULE`, and the paymaster split into `PAYMASTER_UNDERPAID`, `PAYMASTER_SENDER_LACKS_TOKEN` and `PAYMASTER_FEE_FRAME_INVALID`. `BAD_SIGNATURE` is a `VALIDATION_REVERTED` whose revert data is `BadSignature()` (0x5cd5d233), the selector in the recorded bad-signature fixture. Titles and wording are unchanged. Section 3b of `test/check.ts` asserts a code for every case: the three devnet fixtures, 15 sidecar admission messages in the exact wording the regexes parse (not new devnet recordings), receipts, dry runs and a pool-read trace. It fails if any code is never produced. Now 51 offline cases. The README has a codes table. **The app's `src/diagnose.ts` does not have codes yet**: porting them is additive, a `code` on each push.
 
 ### S05 · Gas estimation for drafts
-- status: doing
+- status: done
 - owner: esh
 - started: 2026-11-07
 - priority: P1
@@ -173,10 +173,10 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
   - The simulation needs a valid signature, so the signer is required. Signing covers the limits, so re-sign after changing them.
   - A paymaster's fee depends on `maxCostBound`, so re-quote after shrinking limits. Use the recipe's `requote` when one is passed.
 - done when: an offline test with a scripted simulate shows the limits rewritten and the VERIFY sum ≤ 100k; `test:live` estimates the recipe transfer (it will fail on the signature with a dummy key, so assert only the first simulate call's shape).
-- log:
+- log: `r.estimate(draft, signer, { probeGas, verifyBudget, requote })` in `src/client.ts`: probes SENDER frames at 500k, sets limits to used × 1.25 rounded up to 1,000, shares the 100k VERIFY budget in proportion to headroom when 1.25× would exceed it (warning says so), re-signs and confirms with a second simulate, returns `{ draft, simulation, warnings, ok }`. Evidence: `npm test` → 'sdk: 79 offline cases OK' (case 4d: probe limits, final limits [13k, 67k, 36k, 20k], VERIFY sum ≤ 100k, capped case warns, unrunnable tx throws instead of guessing). A first version gave the first VERIFY frame its whole 1.25× and starved the next; the test caught it (113,000 > 100,000) and the allocation is now proportional. Not asserted live: a live estimate needs the demo wallet's key; nothing was sent.
 
 ### S06 · Keyed nonces (EIP-8250) and recent-root references in drafts
-- status: doing
+- status: done
 - owner: esh
 - started: 2026-11-07
 - priority: P1
@@ -188,7 +188,7 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
   - Pass them through `newTx` and back out in `decodeDraft`.
   - In `buildFrameTx`, if a key ≠ 0 is given, read that key's sequence from the NONCE_MANAGER predeploy `0x…8250`. Check the call shape against EIP-8250 and the sidecar source.
 - done when: decode → encode round-trips byte-identically for a tx with nonce key 5 and one recent-root reference; the golden hash for key 0 is unchanged.
-- log:
+- log: `Draft` gains optional `nonceKeys` and `recentRootReferences`; `toFrameTx` passes them, `decodeDraft` returns them (only when non-default, so plain txs decode to plain drafts); new exports `nonceSlot`, `checkNonceKeys`; `r.keyedNonce(sender, keys)` and `buildFrameTx({ nonceKeys })`. **Finding vs the task text:** EIP-8250 says NONCE_MANAGER's code is `revert(0,0)`, so there is no call to read a sequence; it is read from storage slot `keccak256(pad32(sender) ‖ pad32(key))` with `eth_getStorageAt`. Keys must be strictly increasing (≤16) and, since a tx has one shared sequence, at the same sequence (else a clear error). Evidence: `npm test` → 'sdk: 79 offline cases OK' (nonce keys [5,9] + one recent root decode → re-sign byte-identical; key 0 golden hash 0x18b0…744d unchanged; slot formula; build reads the two slots and skips eth_getTransactionCount); `npm run test:live` (read-only) → 'unused key 123456789 → sequence 0' from the real devnet. Not checked: that a node accepts a tx spending a keyed nonce (needs a send).
 
 ### S07 · Multiple signatures and P256
 - status: todo
@@ -265,7 +265,7 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 - log:
 
 ### S12 · Cancellation and back-off for watching
-- status: doing
+- status: done
 - owner: esh
 - started: 2026-11-07
 - priority: P3
@@ -274,7 +274,7 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 - why: Polling is fixed at 2 s with no way to cancel `waitForInclusion`. UIs need to abort when a component unmounts.
 - how: Accept `signal?: AbortSignal` and reject with an `AbortError`. Use exponential back-off from 1 s up to 8 s. Keep the 2-s default for the first 30 s, which is what the demo relied on.
 - done when: offline tests cover abort and a back-off schedule.
-- log:
+- log: `watch` and `waitForInclusion` take `signal?: AbortSignal` (watch stops quietly; waitForInclusion rejects with an `AbortError`, also during the receipt wait) and `maxIntervalMs`. Polling is `intervalMs` (default 2 s) for the first 30 s, then doubles up to 8 s via the exported pure `nextPollDelay`. Evidence: `npm test` → 'sdk: 79 offline cases OK' (schedule 2→4→8→8 s, base never lowered, already-aborted rejects at once, abort rejects within 1 s of a 60 s timeout, no polling after abort).
 
 ### S13 · Browser bundle smoke test
 - status: todo

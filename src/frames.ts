@@ -1,7 +1,7 @@
 // Generic frame-transaction drafts: build, sign with any signer, patch, encode and decode. No network here.
 import { profile as tracerProfile } from '@forshtat/hegota-support/profiles/ethrex-eip8141-tracer'
-import { decodeTx, encodeTx, newTx, secp256k1Placeholder, sigHash, txHash, type FrameTx } from '@forshtat/hegota-support/tx'
-import { concat, numberToHex, parseSignature, toHex, type Address, type Hex } from 'viem'
+import { decodeTx, encodeTx, newTx, secp256k1Placeholder, sigHash, txHash, type FrameTx, type RecentRootReference } from '@forshtat/hegota-support/tx'
+import { concat, keccak256, numberToHex, pad, parseSignature, toHex, type Address, type Hex } from 'viem'
 import { sign } from 'viem/accounts'
 import type { Frame, Patch } from './diagnose.ts'
 
@@ -24,7 +24,18 @@ export type FrameSpec = {
   flags?: number
 }
 /** An unsigned, editable transaction: change any field, then sign again. */
-export type Draft = { sender: Address; nonce: bigint; frames: FrameSpec[]; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
+export type Draft = {
+  sender: Address
+  /** The sequence number. With `nonceKeys` it is the shared sequence of every selected key (EIP-8250). */
+  nonce: bigint
+  frames: FrameSpec[]
+  maxFeePerGas: bigint
+  maxPriorityFeePerGas: bigint
+  /** EIP-8250 keyed nonces (at most 16, strictly increasing). Omit for the sender's linear account nonce (`[0n]`). */
+  nonceKeys?: bigint[]
+  /** EIP-8272 `(sourceId, slot, root)` references, carried in the payload on devnets that use the early revision. */
+  recentRootReferences?: RecentRootReference[]
+}
 
 type FrameInit = { target?: Address | null; gas: bigint; stateGas?: bigint; value?: bigint; data?: Hex }
 /** A VERIFY frame that approves `scope` (SCOPE.EXECUTION for the sender's own check, SCOPE.PAYMENT for a paymaster). */
@@ -46,13 +57,27 @@ export const maxCostBound = (d: Pick<Draft, 'frames' | 'maxFeePerGas'>) => (d.fr
 export type Signer = Hex | { sign: (args: { hash: Hex }) => Promise<Hex> } | { signHash: (hash: Hex) => Promise<Hex> }
 
 export function toFrameTx(d: Draft, chainId: number | bigint, profile: Profile = DEFAULT_PROFILE): FrameTx {
-  return newTx({
+  const tx = newTx({
     chainId,
     sender: d.sender,
     nonceSeq: d.nonce,
+    ...(d.nonceKeys ? { nonceKeys: d.nonceKeys } : {}),
     fees: { maxFeePerGas: d.maxFeePerGas, maxPriorityFeePerGas: d.maxPriorityFeePerGas },
     signatures: [secp256k1Placeholder(profile)],
     frames: d.frames.map((f) => ({ mode: f.mode, flags: f.flags ?? 0, target: f.target, limits: { execution: f.gas, state: f.stateGas }, value: f.value, data: f.data })),
+  })
+  return d.recentRootReferences ? { ...tx, recentRootReferences: d.recentRootReferences } : tx
+}
+
+/** The `NONCE_MANAGER` storage slot that holds `sender`'s sequence for `key`: `keccak256(pad32(sender) ‖ pad32(key))` (EIP-8250). */
+export const nonceSlot = (sender: Address, key: bigint): Hex => keccak256(concat([pad(sender, { size: 32 }), pad(toHex(key), { size: 32 })]))
+
+/** Checks keyed-nonce rules the node would reject anyway, so you find out before signing. Throws on a bad key set. */
+export function checkNonceKeys(keys: readonly bigint[]): void {
+  if (keys.length > 16) throw new Error(`nonceKeys: at most 16 keys (got ${keys.length})`)
+  keys.forEach((k, i) => {
+    if (k < 0n || k >= 2n ** 256n) throw new Error(`nonceKeys[${i}] is outside uint256`)
+    if (i > 0 && k <= keys[i - 1]!) throw new Error('nonceKeys must be strictly increasing (one canonical encoding per key set)')
   })
 }
 
@@ -84,6 +109,9 @@ export function decodeDraft(raw: Hex, profile: Profile = DEFAULT_PROFILE): Draft
     nonce: t.nonceSeq,
     maxFeePerGas: t.fees.maxFeePerGas,
     maxPriorityFeePerGas: t.fees.maxPriorityFeePerGas,
+    // Only when they differ from the defaults, so a plain draft round-trips to a plain draft.
+    ...(t.nonceKeys.length === 1 && t.nonceKeys[0] === 0n ? {} : { nonceKeys: t.nonceKeys }),
+    ...(t.recentRootReferences.length ? { recentRootReferences: t.recentRootReferences } : {}),
     frames: t.frames.map((f) => ({ mode: f.mode, flags: f.flags, target: f.target, gas: f.limits.execution, stateGas: f.limits.state, value: f.value, data: f.data })),
   }
 }

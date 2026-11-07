@@ -2,14 +2,14 @@
 // Run: npm test   (or: node test/check.ts --live)
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { createPublicClient, encodeErrorResult, http, type Hex } from 'viem'
+import { concat, createPublicClient, encodeErrorResult, http, keccak256, pad, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { JsonRpcProvider, Wallet } from 'ethers'
 import { ethersSigner, ethersTransport } from '../src/ethers.ts'
 import { erc20Paymaster, transferData } from '../recipes/erc20Paymaster.ts'
 import {
   ALT_MEMPOOL_DEVNET, DryRunFailed, FINDING_CODES, diagnoseDraft, RpcError, SCOPE, TxNotIncluded, WaitTimeout, applyPatch, createReadmit, decodeDraft, diagnose, frameActions,
-  rawTxHash, rejectionStats, senderFrame, signDraft, signingHash, txStage, verifyFrame, type Draft,
+  rawTxHash, rejectionStats, senderFrame, nonceSlot, checkNonceKeys, nextPollDelay, signDraft, signingHash, txStage, verifyFrame, type Draft,
 } from '../src/index.ts'
 import { connect, payWithEth } from '../src/index.ts'
 
@@ -198,6 +198,94 @@ function fake(script: Record<string, (params: any[]) => any>) {
   assert.ok(e instanceof RpcError && e.code === 'RPC_UNREACHABLE' && e.method === 'eth_getTransactionReceipt'); ok()
 }
 
+// 4b. S06: keyed nonces and recent-root references survive build → sign → decode → sign.
+{
+  const keyed: Draft = { ...draft, nonce: 3n, nonceKeys: [5n, 9n], recentRootReferences: [{ sourceId: `0x${'ab'.repeat(32)}`, slot: 42n, root: `0x${'cd'.repeat(32)}` }] }
+  const raw = await signDraft(keyed, key, 1337)
+  const back = decodeDraft(raw)
+  assert.deepEqual(back.nonceKeys, [5n, 9n]); ok()
+  assert.deepEqual(back.recentRootReferences, keyed.recentRootReferences); ok()
+  assert.equal(await signDraft(back, key, 1337), raw, 'decode → re-sign is byte-identical'); ok()
+  assert.notEqual(rawTxHash(raw), GOLDEN, 'keys change the tx'); ok()
+  assert.equal(rawTxHash(await signDraft(draft, key, 1337)), GOLDEN, 'no keys → the golden hash is unchanged'); ok()
+  assert.equal(decodeDraft(byKey).nonceKeys, undefined, 'a plain tx decodes to a plain draft'); ok()
+  assert.equal(nonceSlot(me, 5n), keccak256(concat([pad(me, { size: 32 }), pad('0x05', { size: 32 })])), 'EIP-8250 slot = keccak256(pad32(sender) ‖ pad32(key))'); ok()
+  assert.throws(() => checkNonceKeys([2n, 2n]), /strictly increasing/); ok()
+  assert.throws(() => checkNonceKeys(Array.from({ length: 17 }, (_, i) => BigInt(i))), /at most 16/); ok()
+  // buildFrameTx reads the key's sequence from NONCE_MANAGER storage (it has no getter) and keeps the keys
+  const asked: any[] = []
+  const eth = fake({
+    eth_getStorageAt: (p) => { asked.push(p); return '0x0000000000000000000000000000000000000000000000000000000000000004' },
+    eth_gasPrice: () => '0x1',
+  })
+  const r = createReadmit({ ethrex: eth.t, miner: fake({}).t, chainId: 1337 })
+  const built = await r.buildFrameTx({ sender: me, frames: draft.frames, nonceKeys: [5n, 9n] })
+  assert.equal(built.nonce, 4n); assert.deepEqual(built.nonceKeys, [5n, 9n])
+  assert.deepEqual(asked.map((a) => a[1]), [nonceSlot(me, 5n), nonceSlot(me, 9n)])
+  assert.ok(!eth.calls.includes('eth_getTransactionCount'), 'keyed: no legacy nonce lookup'); ok()
+  const split = createReadmit({ ethrex: fake({ eth_getStorageAt: (p) => (p[1] === nonceSlot(me, 5n) ? '0x1' : '0x2'), eth_gasPrice: () => '0x1' }).t, miner: fake({}).t, chainId: 1337 })
+  await assert.rejects(split.buildFrameTx({ sender: me, frames: draft.frames, nonceKeys: [5n, 9n] }), /different sequences/); ok()
+  const plain = createReadmit({ ethrex: fake({ eth_getTransactionCount: () => '0x7', eth_gasPrice: () => '0x1' }).t, miner: fake({}).t, chainId: 1337 })
+  assert.equal((await plain.buildFrameTx({ sender: me, frames: draft.frames })).nonce, 7n, 'no keys → legacy nonce as before'); ok()
+}
+
+// 4c. S12: back-off schedule and cancellation.
+{
+  assert.equal(nextPollDelay(2000, 10_000, 2000), 2000, 'flat 2 s for the first 30 s')
+  assert.equal(nextPollDelay(2000, 29_999, 2000), 2000)
+  assert.deepEqual([2000, 4000, 8000, 8000].map((d, i) => nextPollDelay(d, 31_000 + i, 2000)), [4000, 8000, 8000, 8000], 'then doubles up to 8 s'); ok()
+  assert.equal(nextPollDelay(5, 40_000, 5, 8000), 10, 'a small base backs off from itself'); ok()
+  assert.equal(nextPollDelay(20_000, 40_000, 20_000, 8000), 20_000, 'never below the base interval'); ok()
+  const idle = () => createReadmit({ ethrex: fake({}).t, miner: fake({ skandha_explorer_getTransaction: () => null }).t, chainId: 1337 })
+  const early = new AbortController(); early.abort()
+  const e0 = await idle().waitForInclusion('0x05', { signal: early.signal }).catch((x) => x)
+  assert.equal(e0.name, 'AbortError', 'an already-aborted signal rejects at once'); ok()
+  const ac = new AbortController()
+  const pending = idle().waitForInclusion('0x06', { intervalMs: 5, timeoutMs: 60_000, signal: ac.signal }).catch((x) => x)
+  setTimeout(() => ac.abort(), 30)
+  const t0 = Date.now()
+  assert.equal((await pending).name, 'AbortError')
+  assert.ok(Date.now() - t0 < 1_000, 'abort rejects promptly, not at the timeout'); ok()
+  // watch stops polling after abort
+  const node = fake({ skandha_explorer_getTransaction: () => null })
+  const w = createReadmit({ ethrex: fake({}).t, miner: node.t, chainId: 1337 })
+  const wc = new AbortController()
+  w.watch('0x07', () => {}, { intervalMs: 5, signal: wc.signal })
+  await new Promise((done) => setTimeout(done, 40)); wc.abort()
+  const after = node.calls.length
+  await new Promise((done) => setTimeout(done, 60))
+  assert.ok(node.calls.length <= after + 1, 'no polling after abort'); ok()
+}
+
+// 4d. S05: estimate sets limits from a real simulation and keeps VERIFY within 100k.
+{
+  const run = (gas: number[]) => ({ canonicalMempoolValid: true, canonicalMempoolViolation: null, prefixShape: null, payer: A.paymaster, maxCost: '0x1', gasUsed: '0x0', executionStatus: 'success' as const, executionError: null, frames: gas.map((g) => ({ gasUsed: '0x' + g.toString(16), succeeded: true })) })
+  const seen: Draft[] = []
+  const sims = [run([10_000, 52_848, 28_461, 16_000]), run([10_000, 52_848, 28_461, 16_000])]
+  let i = 0
+  const eth = fake({ ethrex_simulateFrameTransaction: (p) => { seen.push(decodeDraft(p[0])); return sims[i++] } })
+  const r = createReadmit({ ethrex: eth.t, miner: fake({}).t, chainId: 1337 })
+  const est = await r.estimate(draft, key)
+  assert.deepEqual(seen[0].frames.map((f) => f.gas), [10_000n, 70_000n, 500_000n, 500_000n], 'probe: SENDER frames get 500k, VERIFY keep their own'); ok()
+  assert.deepEqual(est.draft.frames.map((f) => f.gas), [13_000n, 67_000n, 36_000n, 20_000n], 'limits = used × 1.25 rounded up to 1,000'); ok()
+  assert.equal(est.ok, true); assert.deepEqual(est.warnings, [])
+  const verifySum = est.draft.frames.filter((f) => f.mode === 1).reduce((s, f) => s + f.gas, 0n)
+  assert.ok(verifySum <= 100_000n, `VERIFY sum ${verifySum}`); ok()
+  assert.deepEqual(seen[1].frames.map((f) => f.gas), est.draft.frames.map((f) => f.gas), 'the confirming run uses the final, re-signed limits'); ok()
+}
+{
+  // VERIFY frames that would exceed 100k are capped and a warning says so
+  const heavy = { ...draft, frames: [verifyFrame(SCOPE.EXECUTION, { gas: 60_000n }), verifyFrame(SCOPE.PAYMENT, { target: A.paymaster, gas: 60_000n }), draft.frames[2]] }
+  const sim = { canonicalMempoolValid: true, canonicalMempoolViolation: null, prefixShape: null, payer: null, maxCost: '0x1', gasUsed: '0x0', executionStatus: 'success' as const, executionError: null, frames: [50_000, 50_000, 10_000].map((g) => ({ gasUsed: '0x' + g.toString(16), succeeded: true })) }
+  const r = createReadmit({ ethrex: fake({ ethrex_simulateFrameTransaction: () => sim }).t, miner: fake({}).t, chainId: 1337 })
+  const est = await r.estimate(heavy, key)
+  const sum = est.draft.frames.filter((f) => f.mode === 1).reduce((s, f) => s + f.gas, 0n)
+  assert.ok(sum <= 100_000n && est.warnings.some((w) => /validation budget/.test(w)), `${sum} ${est.warnings}`); ok()
+  // an unrunnable tx is reported, not guessed at
+  const dead = createReadmit({ ethrex: fake({ ethrex_simulateFrameTransaction: () => ({ ...sim, frames: null, executionError: 'boom' }) }).t, miner: fake({}).t, chainId: 1337 })
+  await assert.rejects(dead.estimate(draft, key), /could not run the transaction \(boom\)/); ok()
+}
+
 // 5. The purpose-first API (connect): why / prepare / check / send / mempool, against scripted nodes.
 {
   const c = connect({ ethrex: fake({ eth_getTransactionReceipt: () => oog.receipt }).t, miner: fake({ skandha_explorer_getTransaction: () => oog.tx }).t, chainId: 1337 })
@@ -276,5 +364,9 @@ if (process.argv.includes('--live')) {
   const viemClient = createPublicClient({ transport: http(ALT_MEMPOOL_DEVNET.ethrex) }).extend(frameActions({ miner: ALT_MEMPOOL_DEVNET.miner, gateway: ALT_MEMPOOL_DEVNET.gateway, chainId: 1337 }))
   console.log('live viem extend:', (await viemClient.explainFrameTransaction(gold)).chain.headline)
   const viaEthers = createReadmit({ ...ALT_MEMPOOL_DEVNET, ethrex: ethersTransport(new JsonRpcProvider(ALT_MEMPOOL_DEVNET.ethrex as string, 1337, { staticNetwork: true })) })
+  // S06 (read-only): the NONCE_MANAGER storage read works on the real node; an unused key reads sequence 0, and the demo wallet's own key 0 is not stored there.
+  const keyedDraft = await r.buildFrameTx({ sender: dep.demoWallet, frames: d.frames, nonceKeys: [123_456_789n] })
+  console.log(`live keyed nonce: unused key 123456789 → sequence ${keyedDraft.nonce}, keys ${keyedDraft.nonceKeys}`)
+  assert.equal(keyedDraft.nonce, 0n, 'an unused keyed nonce reads 0')
   console.log('live ethers transport:', (await viaEthers.explain(gold)).chain.headline)
 }

@@ -4,7 +4,7 @@ import { decodeTx, encodeTx, type FrameTx } from '@forshtat/hegota-support/tx'
 import { toHex, type Address, type Hex } from 'viem'
 import { diagnose, diagnoseDraft, type Diagnosis, type Receipt, type Simulation, type TxResult } from './diagnose.ts'
 import { DryRunFailed, RpcError, TxNotIncluded, WaitTimeout } from './errors.ts'
-import { DEFAULT_PROFILE, applyPatch, draftFrames, signDraft, type Draft, type FrameSpec, type Profile, type Signer } from './frames.ts'
+import { DEFAULT_PROFILE, MODE, applyPatch, checkNonceKeys, draftFrames, nonceSlot, signDraft, type Draft, type FrameSpec, type Profile, type Signer } from './frames.ts'
 import { FINAL_STAGES, rejectionStats, txStage, type AdmissionRow, type Stage } from './monitor.ts'
 
 /** A JSON-RPC transport: a URL, or your own function (e.g. a viem client's `request`). */
@@ -34,7 +34,25 @@ export const ALT_MEMPOOL_DEVNET = {
   chainId: 1337,
 } as const satisfies ReadmitConfig
 
-export type WatchOptions = { node?: NodeName; intervalMs?: number; timeoutMs?: number }
+export type WatchOptions = {
+  node?: NodeName
+  /** Poll every this many ms for the first 30 s (default 2000), then back off. */
+  intervalMs?: number
+  /** Longest gap between polls once backing off (default 8000, never below `intervalMs`). */
+  maxIntervalMs?: number
+  timeoutMs?: number
+  /** Abort to stop polling: `watch` stops quietly, `waitForInclusion` rejects with an AbortError. */
+  signal?: AbortSignal
+}
+
+/** After this long at the base interval, polling backs off. */
+export const BACKOFF_AFTER_MS = 30_000
+/** The next poll gap: the base interval for the first 30 s, then doubling up to `maxMs`. Pure, so it can be tested. */
+export const nextPollDelay = (current: number, elapsedMs: number, baseMs: number, maxMs = 8000): number =>
+  elapsedMs < BACKOFF_AFTER_MS ? baseMs : Math.min(Math.max(maxMs, baseMs), current * 2)
+
+const abortError = (signal: AbortSignal): Error =>
+  signal.reason instanceof Error ? signal.reason : Object.assign(new Error('The wait was aborted'), { name: 'AbortError' })
 
 export function createReadmit(config: ReadmitConfig) {
   const profile = config.profile ?? DEFAULT_PROFILE
@@ -88,35 +106,52 @@ export function createReadmit(config: ReadmitConfig) {
 
   /** Calls `onUpdate` on every stage change until a final stage or the timeout. Returns a stop function. */
   function watch(hash: Hex, onUpdate: (s: Stage) => void, opts: WatchOptions = {}): () => void {
-    const { node: n, intervalMs = 2000, timeoutMs = 120_000 } = opts
+    const { node: n, intervalMs = 2000, maxIntervalMs = 8000, timeoutMs = 120_000, signal } = opts
     let last: Stage | null = null
     let stopped = false
+    let delay = intervalMs
+    let timer: ReturnType<typeof setTimeout> | undefined
     const started = Date.now()
+    const stop = () => { stopped = true; clearTimeout(timer); signal?.removeEventListener('abort', stop) }
     const tick = async () => {
       if (stopped) return
       const s = await stage(hash, n).catch(() => last ?? 'pending')
+      if (stopped) return // aborted while the request was in flight
       if (s !== last) onUpdate((last = s))
-      if (FINAL_STAGES.includes(s) || Date.now() - started > timeoutMs) stopped = true
-      else setTimeout(tick, intervalMs)
+      if (FINAL_STAGES.includes(s) || Date.now() - started > timeoutMs) return stop()
+      delay = nextPollDelay(delay, Date.now() - started, intervalMs, maxIntervalMs)
+      timer = setTimeout(tick, delay)
     }
+    if (signal?.aborted) return () => {}
+    signal?.addEventListener('abort', stop, { once: true })
     void tick()
-    return () => { stopped = true }
+    return stop
   }
 
   /** Resolves with the receipt once included. Rejects with TxNotIncluded (rejected / failed / dropped, with a diagnosis) or WaitTimeout. */
   function waitForInclusion(hash: Hex, opts: WatchOptions = {}): Promise<Receipt> {
     const timeoutMs = opts.timeoutMs ?? 120_000
+    const { signal } = opts
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) return reject(abortError(signal))
       let last: Stage | null = null
-      const timer = setTimeout(() => { stop(); reject(new WaitTimeout(hash, last, timeoutMs)) }, timeoutMs)
+      const onAbort = () => { clearTimeout(timer); stop(); reject(abortError(signal!)) }
+      const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); stop(); reject(new WaitTimeout(hash, last, timeoutMs)) }, timeoutMs)
+      signal?.addEventListener('abort', onAbort, { once: true })
       const stop = watch(hash, async (s) => {
         last = s
         if (!FINAL_STAGES.includes(s)) return
         clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
         try {
           if (s === 'included') {
             // The sidecar can report OnChain a moment before ethrex serves the receipt.
-            for (let i = 0; i < 10; i++) { const r = await getReceipt(hash); if (r) return resolve(r); await new Promise((ok) => setTimeout(ok, 1000)) }
+            for (let i = 0; i < 10; i++) {
+              const r = await getReceipt(hash)
+              if (r) return resolve(r)
+              if (signal?.aborted) return reject(abortError(signal))
+              await new Promise((ok) => setTimeout(ok, 1000))
+            }
             return reject(new WaitTimeout(hash, s, timeoutMs))
           }
           const tx = await getTx(hash, opts.node)
@@ -124,7 +159,7 @@ export function createReadmit(config: ReadmitConfig) {
         } catch (e) {
           reject(e)
         }
-      }, { ...opts, timeoutMs: timeoutMs + 1000 })
+      }, { ...opts, signal: undefined, timeoutMs: timeoutMs + 1000 })
     })
   }
 
@@ -137,14 +172,31 @@ export function createReadmit(config: ReadmitConfig) {
 
   // --- Building and sending ----------------------------------------------------------------------------------
   /** Fills nonce and fees from the node. Pass any frames (see verifyFrame / senderFrame). */
-  async function buildFrameTx(p: { sender: Address; frames: FrameSpec[]; nonce?: bigint; maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint }): Promise<Draft> {
+  /**
+   * The sequence the next tx on these keys must use. NONCE_MANAGER has no getter (every call to it reverts), so this
+   * reads the storage slot directly. An unused key reads 0. Keys of one tx share one sequence, so they must agree.
+   */
+  async function keyedNonce(sender: Address, keys: bigint[]): Promise<bigint> {
+    const manager = profile.predeploys.NONCE_MANAGER
+    if (!manager) throw new Error('This profile has no NONCE_MANAGER predeploy, so keyed nonces are not available')
+    const seqs = await Promise.all(keys.map((k) => eth<string>('eth_getStorageAt', [manager, nonceSlot(sender, k), 'latest']).then(BigInt)))
+    if (seqs.some((s) => s !== seqs[0])) throw new Error(`nonceKeys are at different sequences (${seqs.join(', ')}); a tx uses one shared sequence, so pick keys that are in step`)
+    return seqs[0] ?? 0n
+  }
+
+  async function buildFrameTx(p: { sender: Address; frames: FrameSpec[]; nonce?: bigint; nonceKeys?: bigint[]; recentRootReferences?: Draft['recentRootReferences']; maxFeePerGas?: bigint; maxPriorityFeePerGas?: bigint }): Promise<Draft> {
+    const keyed = p.nonceKeys && !(p.nonceKeys.length === 1 && p.nonceKeys[0] === 0n)
+    if (p.nonceKeys) checkNonceKeys(p.nonceKeys)
     const [nonce, gasPrice] = await Promise.all([
-      p.nonce ?? eth<string>('eth_getTransactionCount', [p.sender, 'pending']).then(BigInt),
+      p.nonce ?? (keyed ? keyedNonce(p.sender, p.nonceKeys!) : eth<string>('eth_getTransactionCount', [p.sender, 'pending']).then(BigInt)),
       p.maxFeePerGas ? Promise.resolve(0n) : eth<string>('eth_gasPrice').then(BigInt),
     ])
     const floor = config.minMaxFeePerGas ?? 2_000_000_000n
     const maxFeePerGas = p.maxFeePerGas ?? (gasPrice * 2n > floor ? gasPrice * 2n : floor)
-    return { sender: p.sender, nonce, frames: p.frames, maxFeePerGas, maxPriorityFeePerGas: p.maxPriorityFeePerGas ?? maxFeePerGas / 2n }
+    return {
+      sender: p.sender, nonce, frames: p.frames, maxFeePerGas, maxPriorityFeePerGas: p.maxPriorityFeePerGas ?? maxFeePerGas / 2n,
+      ...(p.nonceKeys ? { nonceKeys: p.nonceKeys } : {}), ...(p.recentRootReferences ? { recentRootReferences: p.recentRootReferences } : {}),
+    }
   }
   const sign = (d: Draft, signer: Signer) => signDraft(d, signer, config.chainId, profile)
 
@@ -154,6 +206,52 @@ export function createReadmit(config: ReadmitConfig) {
     const simulation = await simulate(raw, { trace: true })
     const diagnosis = diagnoseDraft(draftFrames(d), simulation, { sender: d.sender })
     return { raw, simulation, diagnosis, ok: !diagnosis.findings.some((f) => f.tone === 'fail') }
+  }
+
+  /**
+   * Sets each frame's gas limit from a real simulation, so you don't guess. SENDER frames are first simulated with a
+   * generous limit (`probeGas`, default 500k); every frame then gets `used × 1.25` rounded up to 1,000 (the fix rule).
+   * VERIFY frames together are kept within the sidecar's 100,000 budget (a warning says when that bites). Signing covers
+   * the limits, so it signs, simulates and re-signs. Pass `requote` for a paymaster whose fee depends on the limits.
+   * Nothing is broadcast. `ok` is false if the confirming simulation still fails (the warnings say why).
+   */
+  async function estimate(d: Draft, signer: Signer, opts: { probeGas?: bigint; verifyBudget?: bigint; requote?: (d: Draft) => Promise<Draft> } = {}) {
+    const probeGas = opts.probeGas ?? 500_000n
+    const budget = opts.verifyBudget ?? 100_000n
+    const warnings: string[] = []
+    const probe: Draft = { ...d, frames: d.frames.map((f) => (f.mode === MODE.SENDER && f.gas < probeGas ? { ...f, gas: probeGas } : f)) }
+    const first = await simulate(await sign(probe, signer))
+    if (!first.frames) throw new Error(`estimate: the node could not run the transaction (${first.executionError ?? first.canonicalMempoolViolation ?? 'no frame data'}); fix that first (run dryRun for a diagnosis)`)
+    const usedAt = (i: number) => BigInt(first.frames![i]?.gasUsed ?? '0x0')
+    const want = probe.frames.map((_, i) => {
+      const g = ((usedAt(i) * 125n + 99n) / 100n + 999n) / 1000n * 1000n
+      return g === 0n ? 1000n : g
+    })
+    // VERIFY frames share one budget. If 1.25x on each would exceed it, keep what each used and share the spare room
+    // in proportion to the headroom each one asked for (rounded down to 1,000, so the sum stays inside).
+    const vi = probe.frames.flatMap((f, i) => (f.mode === MODE.VERIFY ? [i] : []))
+    const wantSum = vi.reduce((s, i) => s + want[i]!, 0n)
+    const usedSum = vi.reduce((s, i) => s + usedAt(i), 0n)
+    const gas = [...want]
+    if (wantSum > budget) {
+      if (usedSum >= budget) {
+        vi.forEach((i) => { gas[i] = usedAt(i) })
+        warnings.push(`the VERIFY frames use ${usedSum} gas, at or over the ${budget} validation budget, so there is no headroom to add and the sidecar may reject this`)
+      } else {
+        const spare = budget - usedSum
+        const asked = wantSum - usedSum
+        vi.forEach((i) => { gas[i] = usedAt(i) + ((want[i]! - usedAt(i)) * spare / asked) / 1000n * 1000n })
+        warnings.push(`VERIFY limits were trimmed to share the ${budget} validation budget, so they have less than the usual 25% headroom`)
+      }
+    }
+    const frames = probe.frames.map((f, i) => ({ ...f, gas: gas[i]! }))
+    let draft: Draft = { ...d, frames }
+    if (opts.requote) draft = await opts.requote(draft)
+    const simulation = await simulate(await sign(draft, signer))
+    const failed = (simulation.frames ?? []).findIndex((f) => !f.succeeded)
+    if (!simulation.frames) warnings.push(`the confirming simulation did not run: ${simulation.executionError ?? 'no frame data'}`)
+    else if (failed >= 0) warnings.push(`frame ${failed} still fails with the new limits; run dryRun for a diagnosis`)
+    return { draft, simulation, warnings, ok: !!simulation.frames && failed < 0 }
   }
 
   /**
@@ -198,7 +296,7 @@ export function createReadmit(config: ReadmitConfig) {
     getTx, getReceipt, simulate, send, explain,
     stage, watch, waitForInclusion,
     recent, stats,
-    buildFrameTx, sign, dryRun, sendDraft, replay,
+    buildFrameTx, keyedNonce, sign, estimate, dryRun, sendDraft, replay,
   }
 }
 export type Readmit = ReturnType<typeof createReadmit>

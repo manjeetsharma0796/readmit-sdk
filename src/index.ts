@@ -1,7 +1,7 @@
 // @readmit/sdk: build, dry-run, diagnose, fix, send and watch EIP-8141 frame transactions on an ERC-8421 alt mempool.
-export { createReadmit, ALT_MEMPOOL_DEVNET, type Readmit, type ReadmitConfig, type Transport, type NodeName, type WatchOptions } from './client.ts'
+export { createReadmit, ALT_MEMPOOL_DEVNET, nextPollDelay, BACKOFF_AFTER_MS, type Readmit, type ReadmitConfig, type Transport, type NodeName, type WatchOptions } from './client.ts'
 export {
-  MODE, SCOPE, OVERHEAD, DEFAULT_PROFILE, verifyFrame, senderFrame, maxCostBound, toFrameTx, signingHash, signDraft, rawTxHash, decodeDraft, draftFrames, applyPatch,
+  MODE, SCOPE, OVERHEAD, DEFAULT_PROFILE, verifyFrame, senderFrame, maxCostBound, toFrameTx, signingHash, signDraft, rawTxHash, decodeDraft, draftFrames, applyPatch, nonceSlot, checkNonceKeys,
   type Draft, type FrameSpec, type Signer, type Profile,
 } from './frames.ts'
 export { txStage, rejectionStats, FINAL_STAGES, type Stage, type AdmissionRow, type RejectionStats } from './monitor.ts'

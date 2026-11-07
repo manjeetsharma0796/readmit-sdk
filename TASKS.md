@@ -156,8 +156,9 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 - log: Every `Finding` now has a required `code`, typed as `FindingCode` and listed at runtime in `FINDING_CODES` (23 codes, exported from the package root). Beyond the ticket list: `FRAME_SKIPPED`, `VALIDATION_GAS_OVERDECLARED`, `VALIDATION_STATE_GAS_OVER_CAP`, `VALIDATION_REVERTED`, `ALREADY_KNOWN`, `UNKNOWN_RULE`, and the paymaster split into `PAYMASTER_UNDERPAID`, `PAYMASTER_SENDER_LACKS_TOKEN` and `PAYMASTER_FEE_FRAME_INVALID`. `BAD_SIGNATURE` is a `VALIDATION_REVERTED` whose revert data is `BadSignature()` (0x5cd5d233), the selector in the recorded bad-signature fixture. Titles and wording are unchanged. Section 3b of `test/check.ts` asserts a code for every case: the three devnet fixtures, 15 sidecar admission messages in the exact wording the regexes parse (not new devnet recordings), receipts, dry runs and a pool-read trace. It fails if any code is never produced. Now 51 offline cases. The README has a codes table. **The app's `src/diagnose.ts` does not have codes yet**: porting them is additive, a `code` on each push.
 
 ### S05 · Gas estimation for drafts
-- status: todo
-- owner:
+- status: doing
+- owner: esh
+- started: 2026-11-07
 - priority: P1
 - depends: none
 - touches: `src/client.ts` (`r.estimate(draft, signer)`), `src/frames.ts`, `test/check.ts`
@@ -175,8 +176,9 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 - log:
 
 ### S06 · Keyed nonces (EIP-8250) and recent-root references in drafts
-- status: todo
-- owner:
+- status: doing
+- owner: esh
+- started: 2026-11-07
 - priority: P1
 - depends: none
 - touches: `src/frames.ts` (`Draft`, `toFrameTx`, `decodeDraft`), `src/client.ts` (`buildFrameTx`), `test/check.ts`
@@ -263,8 +265,9 @@ This is the to-do list for anyone picking up the SDK. Each task stands on its ow
 - log:
 
 ### S12 · Cancellation and back-off for watching
-- status: todo
-- owner:
+- status: doing
+- owner: esh
+- started: 2026-11-07
 - priority: P3
 - depends: none
 - touches: `src/client.ts` (`watch`, `waitForInclusion`), `test/check.ts`

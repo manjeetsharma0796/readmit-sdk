@@ -15,6 +15,7 @@ import { TxNotIncluded, WaitTimeout } from './errors.ts'
 import type { Diagnosis, Finding, FindingCode, Verdict } from './diagnose.ts'
 import type { Stage } from './monitor.ts'
 import { erc20Paymaster } from '../recipes/erc20Paymaster.ts'
+import { lookupSelectors } from './selectors.ts'
 
 /** Contracts Readmit deployed on the public devnet: tUSD and a staked paymaster that takes gas in tUSD. */
 export const DEVNET_CONTRACTS = {
@@ -40,6 +41,8 @@ export type Problem = {
   fix?: string
   /** `send` can fix this by itself (a gas limit, or a re-quoted fee). */
   autoFixable: boolean
+  /** The custom error the contract reverted with, when there is one. `name` comes from the Sourcify signature database (null if unknown). */
+  error?: { selector: Hex; name: string | null }
 }
 
 export type Report = {
@@ -82,7 +85,24 @@ export type PreparedTx = { draft: Draft; payGas: GasPayment }
 
 // ---------------------------------------------------------------------------------------------------------------
 
-const toProblem = (f: Finding): Problem => ({ code: f.code, frame: f.frame, message: f.title, why: f.why, fix: f.fix, autoFixable: !!f.patch })
+const toProblem = (f: Finding): Problem => ({ code: f.code, frame: f.frame, message: f.title, why: f.why, fix: f.fix, autoFixable: !!f.patch, ...(f.selector ? { error: { selector: f.selector as Hex, name: null } } : {}) })
+
+/** Names custom-error selectors (e.g. 0x84a4bbd6 → BadWitness()) via Sourcify. Best effort: unknown stays null. */
+async function nameErrors<T extends Report>(r: T): Promise<T> {
+  const all = [...r.problems, ...r.warnings].filter((p) => p.error)
+  if (!all.length) return r
+  const names = await lookupSelectors(all.map((p) => p.error!.selector)).catch(() => new Map<string, string | null>())
+  for (const p of all) {
+    const name = names.get(p.error!.selector) ?? null
+    p.error = { ...p.error!, name }
+    if (name) {
+      p.why = `${p.why} The contract's error: ${name} (${p.error.selector}).`
+      if (p.fix && p.code === 'VALIDATION_REVERTED') p.fix = `Meet the condition behind ${name} in the account or paymaster code. If it's a signature or witness check, re-sign over the right hash with the right key.`
+    }
+  }
+  if (!r.ok && r.problems[0]) r.summary = `${r.problems[0].message}${r.problems[0].error?.name ? `: ${r.problems[0].error.name}` : ''}.${r.problems[0].fix ? ` ${r.problems[0].fix}` : ''}`
+  return r
+}
 
 function report(dx: Diagnosis): Report {
   const problems = dx.findings.filter((f) => f.tone === 'fail').map(toProblem)
@@ -112,7 +132,7 @@ export function connect(network: 'devnet' | ReadmitConfig = 'devnet') {
   async function why(hash: Hex): Promise<Report & { status: Stage; seenBy: 'gateway' | 'miner' }> {
     const dx = await advanced.explain(hash)
     const status = await advanced.stage(hash, dx.node)
-    return { ...report(dx), status, seenBy: dx.node }
+    return nameErrors({ ...report(dx), status, seenBy: dx.node })
   }
 
   /** Describe what you want to do; this builds the frames, reads nonce and fees, and quotes the fee if a token pays. */
@@ -129,7 +149,7 @@ export function connect(network: 'devnet' | ReadmitConfig = 'devnet') {
 
   /** 2. Will this transaction get in? Signs and dry-runs it on the node. Nothing is broadcast. */
   async function check(tx: PreparedTx, signer: Signer): Promise<Report> {
-    return report((await advanced.dryRun(tx.draft, signer)).diagnosis)
+    return nameErrors(report((await advanced.dryRun(tx.draft, signer)).diagnosis))
   }
 
   /**

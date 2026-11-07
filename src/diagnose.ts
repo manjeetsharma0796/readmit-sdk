@@ -369,7 +369,7 @@ export function diagnose(tx: TxResult, receipt: Receipt | null): Diagnosis {
         title: `Frame ${i} rejected the transaction during validation`,
         why: `This frame's verification code (${frames[i] ? role(frames[i]).toLowerCase() : 'verification'}) reverted, so the account or paymaster refused to approve the transaction.${ruleNote}`,
         fix: vrev[2] && vrev[2].length >= 10
-          ? 'Check the error above. A signature error usually means the transaction was signed over the wrong hash or with the wrong key.'
+          ? `It reverted with error ${vrev[2].slice(0, 10)}. Look that selector up in the account's or paymaster's ABI and meet the condition it guards. A signature error usually means the transaction was signed over the wrong hash or with the wrong key.`
           : 'It reverted without an error message. Check what this frame requires: the signature, the payment frame that must follow it, or the balances it reads.',
         selector: vrev[2] && vrev[2].length >= 10 ? vrev[2].slice(0, 10) : undefined,
       })

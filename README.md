@@ -36,7 +36,7 @@ Then pick the job you came for. Each one is a single call that returns the same 
 |---|---|
 | `ok` | Nothing blocks the transaction |
 | `summary` | One sentence for a human |
-| `problems[]` | `{ code, frame, message, why, fix, autoFixable }`, worst first |
+| `problems[]` | `{ code, frame, message, why, fix, autoFixable, error? }`, worst first. `error` is the contract's custom error, named when Sourcify knows it (e.g. `0x84a4bbd6` → `BadWitness()`) |
 | `warnings[]` | Non-blocking things worth knowing |
 | `verdicts` | The mempool, chain and ERC-8421 views |
 

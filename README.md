@@ -88,6 +88,46 @@ await readmit.sendDraft(draft, ethersSigner(new Wallet(process.env.KEY!)))
 
 `ethersSigner` signs the raw signing hash with the wallet's `SigningKey`. Do not use `wallet.signMessage`: it adds the EIP-191 prefix, and the default VERIFY code then rejects the signature.
 
+## Try it manually
+
+A guided walkthrough runs every feature against the **live devnet** and prints PASS / FAIL with what to look at. It's read-only by default: no key, nothing sent.
+
+```bash
+git clone https://github.com/manjeetsharma0796/readmit-sdk && cd readmit-sdk && npm install
+npm run try
+```
+
+It runs 17 steps:
+1. Config and node access.
+2. Explain the golden tx.
+3. Live mempool stats.
+4. Explain someone else's live rejection.
+5. Tracking: `watch`, `waitForInclusion`.
+6. Typed errors.
+7. The generic builder.
+8. Four signer kinds producing identical bytes.
+9. A dry run of a self-paid tx from an empty account: `PAYER_CANNOT_COVER`.
+10. The ERC-20 paymaster recipe with a live Uniswap v4 quote.
+11. The paymaster dry run: `PAYMASTER_SENDER_LACKS_TOKEN`.
+12. Gas and requote patches.
+13. `sendDraft` refusing to broadcast an unfixable tx.
+14. `replay`.
+15. Decoders.
+16. viem `extend`.
+17. The ethers transport.
+
+| Mode | Command |
+|---|---|
+| Explain any tx (paste a hash from the [explorer](https://explorer.altmempool.wtf/) or Readmit's live list) | `npm run try -- --hash 0x…` |
+| Make a throwaway devnet key | `npm run try -- --new-key` |
+| **Real sends** with your devnet key. It asks before each one. | `READMIT_KEY=0x… npm run try -- --send` |
+
+The `--send` mode does two real transactions:
+- **A.** It mints 100 tUSD to your address, with gas paid in ETH.
+- **B.** It sends 1 tUSD with gas paid in tUSD, deliberately starting with too little gas. The dry run catches "frame 3 would run out of gas", `sendDraft` raises the limit and sends, and it follows the tx to inclusion. The dry run also shows the `SHARED_STATE_READ` warning, because the paymaster reads the pool price.
+
+Send A needs a little devnet ETH on the key: use the faucet on the [explorer](https://explorer.altmempool.wtf/) or see [devnet funding](https://docs.altmempool.wtf/guides/devnet/). After that, Send B needs no ETH.
+
 ## What it does
 
 | | Feature | API |

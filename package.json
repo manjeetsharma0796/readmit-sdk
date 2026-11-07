@@ -43,14 +43,15 @@
     "test": "node test/check.ts",
     "test:live": "node test/check.ts --live",
     "prepublishOnly": "npm run build && npm test",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "try": "node playground/manual.ts"
   },
   "dependencies": {
     "@forshtat/hegota-support": "0.0.1"
   },
   "peerDependencies": {
-    "viem": "^2.30.0",
-    "ethers": "^6.0.0"
+    "ethers": "^6.0.0",
+    "viem": "^2.30.0"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

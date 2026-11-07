@@ -44,7 +44,11 @@
     "test:live": "node test/check.ts --live",
     "prepublishOnly": "npm run build && npm test",
     "prepare": "npm run build",
-    "try": "node playground/manual.ts"
+    "try": "node playground/manual.ts",
+    "why": "node examples/1-why-did-it-fail.ts",
+    "check-tx": "node examples/2-check-before-sending.ts",
+    "send-tx": "node examples/3-send-and-make-sure-it-lands.ts",
+    "mempool": "node examples/4-watch-the-mempool.ts"
   },
   "dependencies": {
     "@forshtat/hegota-support": "0.0.1"

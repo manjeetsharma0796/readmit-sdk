@@ -13,3 +13,5 @@ export {
   diagnose, diagnoseDraft, sharedReads, FINDING_CODES, errorString, role, isVerify,
   type Diagnosis, type Finding, type FindingCode, type Patch, type Verdict, type Tone, type Frame, type Simulation, type TxResult, type Receipt, type TraceFrame,
 } from './diagnose.ts'
+// The purpose-first API: connect() → why / prepare / check / send / follow / mempool.
+export { connect, payWithEth, payWithToken, DEVNET_CONTRACTS, type ReadmitConnection, type Report, type Problem, type SendResult, type SendStep, type GasPayment, type Call, type PreparedTx } from './easy.ts'

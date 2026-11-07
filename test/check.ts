@@ -11,6 +11,7 @@ import {
   ALT_MEMPOOL_DEVNET, DryRunFailed, FINDING_CODES, diagnoseDraft, RpcError, SCOPE, TxNotIncluded, WaitTimeout, applyPatch, createReadmit, decodeDraft, diagnose, frameActions,
   rawTxHash, rejectionStats, senderFrame, signDraft, signingHash, txStage, verifyFrame, type Draft,
 } from '../src/index.ts'
+import { connect, payWithEth } from '../src/index.ts'
 
 const load = (n: string) => JSON.parse(readFileSync(new URL(`./fixtures/${n}.json`, import.meta.url), 'utf8'))
 const key = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d' as Hex // well-known local test key
@@ -195,6 +196,66 @@ function fake(script: Record<string, (params: any[]) => any>) {
   const r = createReadmit({ ethrex: 'http://127.0.0.1:9', miner: 'http://127.0.0.1:9', chainId: 1337 })
   const e = await r.getReceipt('0x03').catch((x) => x)
   assert.ok(e instanceof RpcError && e.code === 'RPC_UNREACHABLE' && e.method === 'eth_getTransactionReceipt'); ok()
+}
+
+// 5. The purpose-first API (connect): why / prepare / check / send / mempool, against scripted nodes.
+{
+  const c = connect({ ethrex: fake({ eth_getTransactionReceipt: () => oog.receipt }).t, miner: fake({ skandha_explorer_getTransaction: () => oog.tx }).t, chainId: 1337 })
+  const rep = await c.why(oog.hash)
+  assert.equal(rep.ok, false)
+  assert.equal(rep.problems[0].code, 'FRAME_OUT_OF_GAS')
+  assert.equal(rep.problems[0].frame, 4)
+  assert.equal(rep.problems[0].autoFixable, true)
+  assert.match(rep.summary, /38,000/); ok()
+}
+{
+  // send(): check says frame 1 would run out of gas → fix → check passes → send → included, with the fix recorded
+  const sims = [
+    { frames: [[100, true], [16_000, false]], status: 'reverted' },
+    { frames: [[100, true], [18_461, true]], status: 'success' },
+  ]
+  let i = 0
+  const sim = () => { const x = sims[i++]; return { canonicalMempoolValid: true, canonicalMempoolViolation: null, prefixShape: 'SelfVerify', payer: me, maxCost: '0x1', gasUsed: '0x0', executionStatus: x.status, executionError: null, frames: x.frames.map(([g, k]) => ({ gasUsed: '0x' + Number(g).toString(16), succeeded: k })) } }
+  const included = { ...load('paid-in-tusd').tx }
+  const steps: string[] = []
+  const c = connect({
+    ethrex: fake({ ethrex_simulateFrameTransaction: sim, eth_getTransactionCount: () => '0x3', eth_gasPrice: () => '0x1', eth_getTransactionReceipt: () => load('paid-in-tusd').receipt }).t,
+    miner: fake({ eth_sendFrameTransaction: () => '0xbeef', skandha_explorer_getTransaction: () => included }).t,
+    chainId: 1337,
+  })
+  const tx = await c.prepare({ from: me, calls: [{ to: A.token, data: transferData(to, 1n), gas: 16_000n }], payGas: payWithEth() })
+  assert.equal(tx.draft.nonce, 3n)
+  assert.deepEqual(tx.draft.frames.map((f) => f.mode), [1, 2]) // the sender's own VERIFY, then the call
+  const res = await c.send(tx, key, { onStep: (s) => steps.push(s) })
+  assert.equal(res.status, 'included')
+  assert.equal(res.hash, '0xbeef')
+  assert.deepEqual(res.fixes, ['frame 1 gas 16,000 → 20,000'])
+  assert.equal(res.tx.draft.frames[1].gas, 20_000n)
+  assert.deepEqual(steps, ['checking', 'fixing', 'checking', 'sending', 'waiting', 'done']); ok()
+}
+{
+  // send(): a problem with no automatic fix → status 'blocked', nothing sent
+  let sent = false
+  const c = connect({
+    ethrex: fake({ eth_getTransactionCount: () => '0x0', eth_gasPrice: () => '0x1', ethrex_simulateFrameTransaction: () => ({ canonicalMempoolValid: false, canonicalMempoolViolation: null, prefixShape: null, payer: null, maxCost: '0x1', gasUsed: null, frames: null, executionStatus: null, executionError: null, haltReason: 'insufficient_funds', balance: '0x0', required: '0x10' }) }).t,
+    miner: fake({ eth_sendFrameTransaction: () => { sent = true; return '0x1' } }).t,
+    chainId: 1337,
+  })
+  const res = await c.send(await c.prepare({ from: me, calls: [{ to: A.token }] }), key)
+  assert.equal(res.status, 'blocked')
+  assert.equal(res.problems[0].code, 'PAYER_CANNOT_COVER')
+  assert.equal(sent, false); ok()
+}
+{
+  // mempool(): summary, reasons, and a rejections list to feed into why()
+  const c = connect({ ethrex: fake({}).t, miner: fake({ skandha_explorer_listAdmissions: () => ({ items: [
+    { txHash: '0xa1', outcome: 'rejected', sender: '0xs', at: 1, checks: [{ rule: 'prefix', verdict: 'fail', detail: 'prefix gas budget exceeded' }] },
+    { txHash: '0xa2', outcome: 'included', sender: '0xt', at: 120_001, checks: [] },
+  ] }) }).t, chainId: 1337 })
+  const m = await c.mempool()
+  assert.equal(m.summary, '1 of the last 2 transactions were rejected, from 1 sender, over 2 min.')
+  assert.deepEqual(m.topReasons, [{ rule: 'prefix', count: 1 }])
+  assert.deepEqual(m.rejections, [{ hash: '0xa1', outcome: 'rejected', reason: 'prefix gas budget exceeded' }]); ok()
 }
 console.log(`sdk: ${cases} offline cases OK`)
 

@@ -22,20 +22,111 @@ Requires **Node 23.6+**. It isn't on npm yet, so install it from GitHub; the ins
 npm install github:manjeetsharma0796/readmit-sdk viem
 ```
 
-**1. Explain any transaction by hash.** It works on anyone's transaction, including rejected ones.
+Everything starts with one line:
 
 ```ts
-import { createReadmit, ALT_MEMPOOL_DEVNET } from '@readmit/sdk'
+import { connect } from '@readmit/sdk'
 
-const r = createReadmit(ALT_MEMPOOL_DEVNET)
-const dx = await r.explain('0x3fd93ca4a082d636d08fc27a8afd65b6449dda7aff6609736e8f080064724b9c')
-
-dx.mempool.headline // "Admitted and included"
-dx.chain.headline   // "Executed"
-dx.findings[0]      // { code, tone, frame?, title, why, fix?, patch? }, worst first
+const readmit = connect('devnet') // the public EF alt-mempool devnet; or connect({ ethrex, miner, gateway, chainId })
 ```
 
-**2. Build, dry-run, fix and send your own.**
+Then pick the job you came for. Each one is a single call that returns the same plain **report**:
+
+| Field | What it holds |
+|---|---|
+| `ok` | Nothing blocks the transaction |
+| `summary` | One sentence for a human |
+| `problems[]` | `{ code, frame, message, why, fix, autoFixable }`, worst first |
+| `warnings[]` | Non-blocking things worth knowing |
+| `verdicts` | The mempool, chain and ERC-8421 views |
+
+| You want to… | Call | Runnable example |
+|---|---|---|
+| **1. Find out why a transaction failed** | `readmit.why(hash)` | [`examples/1-why-did-it-fail.ts`](examples/1-why-did-it-fail.ts) |
+| **2. Know if a transaction will get in, before sending** | `readmit.prepare(...)` → `readmit.check(tx, signer)` | [`examples/2-check-before-sending.ts`](examples/2-check-before-sending.ts) |
+| **3. Send it and make sure it lands** | `readmit.send(tx, signer)` | [`examples/3-send-and-make-sure-it-lands.ts`](examples/3-send-and-make-sure-it-lands.ts) |
+| **4. See what the mempool is rejecting** | `readmit.mempool()` | [`examples/4-watch-the-mempool.ts`](examples/4-watch-the-mempool.ts) |
+
+Run the examples straight from a clone, against the live devnet:
+
+```bash
+npm run why                 # explain the newest live rejection (or: npm run why -- 0x…)
+npm run check-tx            # dry-run a tUSD transfer paid in ETH and in tUSD (nothing is sent)
+npm run mempool             # what the devnet is rejecting right now
+READMIT_KEY=0x… npm run send-tx   # a real send: asks first, fixes a too-low gas limit, waits for inclusion
+```
+
+### 1. Why did this transaction fail?
+
+This works for anyone's transaction, including rejections, which never reach a block explorer.
+
+```ts
+const report = await readmit.why('0x6009…f3d3')
+
+report.status   // 'rejected' | 'included' | 'failed' | 'dropped' | 'admitted' | 'pending'
+report.summary  // "Frame 3 ran out of gas. Raise frame 3's gas limit to about 20,000."
+for (const p of report.problems) console.log(p.code, p.frame, p.why, p.fix)
+```
+
+### 2. Will my transaction get in?
+
+Describe *what* you want to do. `prepare` builds the frames, reads the nonce and fees, and quotes the fee if a token pays for gas. `check` signs it and dry-runs it on the node; **nothing is broadcast**.
+
+```ts
+import { payWithEth, payWithToken } from '@readmit/sdk'
+
+const tx = await readmit.prepare({
+  from: myAddress,
+  calls: [{ to: tokenAddress, data: transferCalldata }],  // one or more calls, made as you
+  payGas: payWithToken(),                                 // or payWithEth(); payWithToken() defaults to the devnet's tUSD paymaster
+})
+
+const report = await readmit.check(tx, myKey)  // the signer is a private key, a viem account, or { signHash } for any other scheme
+report.ok       // false
+report.problems // [{ code: 'PAYMASTER_SENDER_LACKS_TOKEN', why: "The paymaster checks the sender's tUSD balance…", fix: 'Top up…' }]
+```
+
+### 3. Send it and make sure it lands
+
+`send` checks the tx. If the check finds something it can fix (a gas limit that's too low, or a fee that needs re-quoting), it applies the fix and checks again. Only then does it send, and it waits for inclusion. It **never throws for a transaction outcome**: you read `status`.
+
+```ts
+const result = await readmit.send(tx, myKey, {
+  onStep: (step, detail) => console.log(step, detail ?? ''), // checking → fixing → checking → sending → waiting → done
+})
+
+result.status  // 'included' | 'rejected' | 'failed' | 'dropped' | 'timeout' | 'blocked' (blocked = nothing was sent)
+result.hash    // the sent tx
+result.fixes   // ['frame 3 gas 16,000 → 20,000']: what send changed for you
+result.summary
+```
+
+To follow a hash you sent some other way: `const stop = readmit.follow(hash, (status) => …)`.
+
+### 4. What is the mempool rejecting right now?
+
+```ts
+const m = await readmit.mempool()
+
+m.summary     // "79 of the last 200 transactions were rejected, from 12 senders, over 54 min."
+m.topReasons  // [{ rule: 'simulation', count: 52 }, { rule: 'mempool', count: 21 }, …]
+m.rejections  // the newest rejections: pass any .hash to readmit.why()
+```
+
+### The flow, end to end
+
+```
+prepare ──► check ──► send ──────────────────────────────► status
+            (dry run)  │ check → fix → check → send → wait   included / rejected / failed / dropped / timeout / blocked
+                       ▼
+why(hash) ◄─ any hash, any time ─── mempool() lists recent rejections
+```
+
+## Full control
+
+`readmit.advanced` is the lower-level client (`createReadmit`). It gives you raw frames, drafts, patches, dry runs, the fix loop, `waitForInclusion`, `replay` and more. Use it when the four jobs above aren't enough.
+
+**Build frames yourself and run the fix loop.**
 
 ```ts
 import { createReadmit, ALT_MEMPOOL_DEVNET, verifyFrame, senderFrame, SCOPE, TxNotIncluded } from '@readmit/sdk'
@@ -60,7 +151,7 @@ try {
 }
 ```
 
-**3. Already on viem?**
+**On viem:** add frame-transaction actions to your client.
 
 ```ts
 import { createPublicClient, http } from 'viem'
@@ -73,7 +164,7 @@ await client.explainFrameTransaction(hash)
 await client.sendFrameDraft(draft, account) // the account can be a viem LocalAccount
 ```
 
-**4. On ethers v6?** `ethers` is an optional peer; install it yourself.
+**On ethers v6:** `ethers` is an optional peer; install it yourself.
 
 ```ts
 import { JsonRpcProvider, Wallet } from 'ethers'
